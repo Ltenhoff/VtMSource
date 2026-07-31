@@ -1,0 +1,10 @@
+.venv/
+.tools/
+build/
+dist/
+*.spec.bak
+__pycache__/
+*.py[cod]
+NocturneArchive.Data/
+.DS_Store
+Thumbs.db
