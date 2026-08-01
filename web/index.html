@@ -73,6 +73,9 @@
   max-height:100%!important;
 }
 </style>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="pdf-bridge.js"></script>
 </head>
 <body>
 <section id="splash" aria-label="Welcome">
@@ -1368,202 +1371,34 @@ function renderCharacter(){
   const r=document.getElementById("characterView"),c=selectedCharacter();
   if(!c){r.innerHTML='<div class="empty"><div><strong>No character selected</strong>Choose a character or create a new one.</div></div>';return}
   if(!c.sheetTemplate)c.sheetTemplate=(String(c.game||"").toLowerCase().includes("cthulhu")||String(c.game||"").toLowerCase().includes("pulp"))?"pulp":"gothic";
-  c.sheetData=c.sheetData||{};normalizeSavedCheckboxes(c);
-  const t=window.SHEET_TEMPLATES?.[c.sheetTemplate],p=imgSrc(c.portraitAssetId),s=characterCondition(c);
-  const imported=!!c.importedPdfData;
-  const viewer=imported
-    ? `<div class="pdf-viewer-shell imported-pdf-shell"><div class="pdf-viewer-tools universal-pdf-tools"><span class="pdf-tool-title">${esc(c.importedPdfName||"Imported PDF")}</span><button id="pdfPrevBtn" title="Previous page">&lsaquo;</button><input id="pdfPageInput" value="1" title="Page number"><span id="pdfPageTotal">/ ?</span><button id="pdfNextBtn" title="Next page">&rsaquo;</button><button id="pdfZoomOutBtn" title="Zoom out">-</button><span id="pdfZoomLabel">100%</span><button id="pdfZoomInBtn" title="Zoom in">+</button><button id="pdfFitBtn" title="Fit width">Fit</button><button id="pdfRotateBtn" title="Rotate clockwise">&#8635;</button><button id="pdfSearchBtn" title="Search PDF">Find</button><button id="pdfSidebarBtn" title="Toggle document sidebar">Panels</button><span class="pdf-tool-spacer"></span><button id="pdfToolbarSaveBtn" title="Save this character PDF">Save</button><button id="pdfToolbarDownloadBtn" title="Save an independent PDF copy">&#8681;</button><button id="pdfToolbarPrintBtn" title="Print PDF">&#128424;</button><button id="pdfToolbarOpenBtn" title="Open in a separate PDF window">&#8599;</button></div><div class="pdf-viewer-stage imported-pdf-stage" id="pdfViewerStage"><div id="importedPdfRotationHost"><iframe id="importedPdfViewer" title="${esc(c.importedPdfName||"Character PDF")}" style="display:block;width:100%;height:calc(100vh - 158px);min-height:920px;border:0;background:#222" allow="fullscreen"></iframe></div></div></div>`
-    : `<div class="pdf-viewer-shell"><div class="pdf-viewer-tools universal-pdf-tools"><span class="pdf-tool-title">${esc(t?.name||"Character Sheet")}</span><button id="pdfPrevBtn">&lsaquo;</button><input id="pdfPageInput" value="1"><span>/ ${t?.pages?.length||1}</span><button id="pdfNextBtn">&rsaquo;</button><button id="pdfZoomOutBtn">-</button><span id="pdfZoomLabel">100%</span><button id="pdfZoomInBtn">+</button><button id="pdfFitBtn" title="Fit width">Fit</button><button id="pdfRotateBtn" title="Rotate clockwise">&#8635;</button><button id="pdfSearchBtn" title="Search fields and text">Find</button><span class="pdf-tool-spacer"></span><button id="pdfToolbarSaveBtn" title="Save changes to this character">Save</button><button id="pdfToolbarDownloadBtn" title="Save an independent PDF copy">&#8681;</button><button id="pdfToolbarPrintBtn" title="Print PDF">&#128424;</button><button id="pdfToolbarOpenBtn" title="Open in a separate PDF window">&#8599;</button></div><div class="pdf-viewer-stage" id="pdfViewerStage"><div id="pdfSheetHost">${t?t.pages.map((q,i)=>renderPdfSheetPage(t,c,i)).join(""):'<div class="notice">Sheet unavailable.</div>'}</div></div></div>`;
-  r.innerHTML=`<div class="character-head">${characterVisualHTML(c,{src:p,fallback:(c.name||"?")[0],wrapperClass:"portrait",imageClass:"",placeholderClass:"placeholder-large"})}<div class="identity"><div class="kicker">${esc(c.game||"Custom")} · ${esc(c.role||"NPC")}</div><h1>${esc(c.name)}</h1><p>${esc(c.alias||c.concept||"No title or concept")}</p><label style="max-width:320px">Condition<select id="characterConditionSelect">${CHARACTER_CONDITIONS.map(x=>`<option value="${x}" ${s===x?"selected":""}>${x}</option>`).join("")}</select></label><span class="character-condition">${esc(s)}</span><div class="btn-row"><button class="btn primary" id="editIdentityBtn">Edit Identity</button><button class="btn" id="choosePortraitBtn">Change or Upload Portrait</button><button class="btn" id="addToMapBtn">Center on Map</button><button class="btn danger" id="deleteCharacterBtn">Delete Character</button></div></div></div><div class="sheet-toolbar"><b>${esc(imported?(c.importedPdfName||"Imported PDF"):(t?.name||"Character Sheet"))}</b><span class="unsaved-badge hidden" id="unsavedBadge">Unsaved changes</span><div class="spacer"></div><button class="btn" id="openPdfWindowBtn">Open PDF Window</button><button class="btn primary" id="saveSheetBtn">Save Sheet</button><button class="btn" id="importPdfBtn">Import Saved PDF</button><button class="btn" id="resetPdfBtn">Reset PDF</button><input hidden type="file" id="importPdfInput" accept="application/pdf,.pdf"></div>${viewer}<div class="sheet-section sheet-notes"><header><h3>Keeper Notes</h3></header><div class="sheet-body"><textarea id="keeperNotes">${esc(c.keeperNotes||c.notes||"")}</textarea></div></div>`;
-
+  const p=imgSrc(c.portraitAssetId),status=characterCondition(c),ruleset=c.sheetTemplate==="pulp"?"cthulhu":"vampire";
+  r.innerHTML=`<div class="character-head">${characterVisualHTML(c,{src:p,fallback:(c.name||"?")[0],wrapperClass:"portrait",imageClass:"",placeholderClass:"placeholder-large"})}<div class="identity"><div class="kicker">${esc(c.game||"Custom")} · ${esc(c.role||"NPC")}</div><h1>${esc(c.name)}</h1><p>${esc(c.alias||c.concept||"No title or concept")}</p><label style="max-width:320px">Condition<select id="characterConditionSelect">${CHARACTER_CONDITIONS.map(x=>`<option value="${x}" ${status===x?"selected":""}>${x}</option>`).join("")}</select></label><span class="character-condition">${esc(status)}</span><div class="btn-row"><button class="btn primary" id="editIdentityBtn">Edit Identity</button><button class="btn" id="choosePortraitBtn">Change or Upload Portrait</button><button class="btn" id="addToMapBtn">Center on Map</button><button class="btn danger" id="deleteCharacterBtn">Delete Character</button></div></div></div><div class="sheet-toolbar"><b id="activePdfTitle">Character PDF</b><div class="spacer"></div><button class="btn" id="openPdfWindowBtn">Open PDF Window</button><button class="btn primary" id="saveSheetBtn">Save Sheet</button><button class="btn" id="importPdfBtn">Import Saved PDF</button><button class="btn" id="resetPdfBtn">Reset PDF</button></div><div id="nativePdfHost" class="pdf-viewer-shell"><div class="notice">Loading the original PDF…</div></div><div class="sheet-section sheet-notes"><header><h3>Keeper Notes</h3></header><div class="sheet-body"><textarea id="keeperNotes">${esc(c.keeperNotes||c.notes||"")}</textarea></div></div>`;
   const byId=id=>document.getElementById(id);
-  if(activeCharacterPdfObjectUrl){URL.revokeObjectURL(activeCharacterPdfObjectUrl);activeCharacterPdfObjectUrl=null;}
-  if(imported){
-    try{
-      const pdfBytes=dataUrlToBytes(c.importedPdfData);
-      activeCharacterPdfObjectUrl=URL.createObjectURL(new Blob([pdfBytes],{type:"application/pdf"}));
-      setupImportedPdfTools(c,pdfBytes,activeCharacterPdfObjectUrl,byId);
-    }catch(error){console.error(error);byId("importedPdfViewer").replaceWith(Object.assign(document.createElement("div"),{className:"notice",textContent:"This stored PDF could not be opened. Import it again to replace the damaged copy."}));}
-  }
   byId("characterConditionSelect").onchange=e=>{c.conditionStatus=e.target.value;normalizeCharacterCondition(c);c.updatedAt=now();saveState("Character condition updated");renderAll()};
   byId("editIdentityBtn").onclick=()=>editCharacterModal(c.id);
   byId("choosePortraitBtn").onclick=()=>chooseAssetModal(c);
   byId("addToMapBtn").onclick=()=>{ensureRelationshipMaps();const m=state.relationshipMaps.find(x=>x.ownerType==="character"&&x.ownerId===c.id&&x.chronicleId===state.activeChronicleId);if(m)state.activeRelationshipMapId=m.id;switchView("map")};
   byId("deleteCharacterBtn").onclick=()=>deleteCharacter(c.id);
-  byId("importPdfBtn").onclick=async()=>{
-    const decision=await promptCharacterPdfExit("replace this PDF with an imported file");
-    if(decision==="cancel")return;
-    if(decision==="save"&&!(await saveCurrentCharacterPdfToFolder()))return;
-    byId("importPdfInput").click();
-  };
-  byId("resetPdfBtn").onclick=async()=>{
-    const decision=await promptCharacterPdfExit("reset this PDF");
-    if(decision==="cancel")return;
-    if(decision==="save"&&!(await saveCurrentCharacterPdfToFolder()))return;
-    await resetCharacterPdf(c);
-  };
-  byId("importPdfInput").onchange=async()=>{const f=byId("importPdfInput").files?.[0];if(f)await importCharacterPdf(f,c)};
-  byId("openPdfWindowBtn").onclick=async()=>{if(imported){const u=URL.createObjectURL(new Blob([dataUrlToBytes(c.importedPdfData)],{type:"application/pdf"}));window.open(u+"#toolbar=1&navpanes=1&scrollbar=1","_blank");setTimeout(()=>URL.revokeObjectURL(u),120000);return}await saveCharacterSheet(false);const b=buildEditablePdf(t,c.sheetData),u=URL.createObjectURL(new Blob([b],{type:"application/pdf"}));window.open(u,"_blank");setTimeout(()=>URL.revokeObjectURL(u),120000)};
-  byId("saveSheetBtn").onclick=async()=>{await saveCurrentCharacterPdfToFolder()};
-  byId("keeperNotes").oninput=markSheetDirty;
-
-  if(imported){sheetDirty=false;sheetSnapshot=JSON.stringify({pdf:c.importedPdfName||"imported",notes:c.keeperNotes||c.notes||""});return}
-
-  let pdfPage=0,pdfZoom=1,pdfRotation=0;
-  const pdfPages=[...r.querySelectorAll(".pdf-sheet-page")],pdfTotal=pdfPages.length||1;
-  const pageInput=byId("pdfPageInput"),zoomLabel=byId("pdfZoomLabel"),prev=byId("pdfPrevBtn"),next=byId("pdfNextBtn"),stage=byId("pdfViewerStage");
-  function updatePdfView(scrollToPage=false){pdfPage=Math.max(0,Math.min(pdfTotal-1,pdfPage));pdfPages.forEach(e=>{e.classList.add("pdf-page-active");e.style.width=`${Math.round(980*pdfZoom)}px`;e.style.maxWidth="none";e.style.transform=`rotate(${pdfRotation}deg)`});pageInput.value=pdfPage+1;zoomLabel.textContent=Math.round(pdfZoom*100)+"%";prev.disabled=!pdfPage;next.disabled=pdfPage===pdfTotal-1;if(scrollToPage)pdfPages[pdfPage]?.scrollIntoView({behavior:"smooth",block:"start"})}
-  prev.onclick=()=>{pdfPage--;updatePdfView(true)};next.onclick=()=>{pdfPage++;updatePdfView(true)};pageInput.onchange=()=>{pdfPage=(+pageInput.value||1)-1;updatePdfView(true)};
-  byId("pdfZoomOutBtn").onclick=()=>{pdfZoom=Math.max(.5,pdfZoom-.1);updatePdfView()};byId("pdfZoomInBtn").onclick=()=>{pdfZoom=Math.min(2.5,pdfZoom+.1);updatePdfView()};
-  byId("pdfFitBtn").onclick=()=>{const available=Math.max(320,stage.clientWidth-44);pdfZoom=Math.min(1,available/980);updatePdfView()};byId("pdfRotateBtn").onclick=()=>{pdfRotation=(pdfRotation+90)%360;updatePdfView()};
-  stage.onscroll=()=>{let best=0,bestDist=Infinity;const top=stage.getBoundingClientRect().top;pdfPages.forEach((pg,i)=>{const d=Math.abs(pg.getBoundingClientRect().top-top-12);if(d<bestDist){bestDist=d;best=i}});if(best!==pdfPage){pdfPage=best;pageInput.value=pdfPage+1;prev.disabled=!pdfPage;next.disabled=pdfPage===pdfTotal-1}};
-  byId("pdfToolbarSaveBtn").onclick=()=>saveCurrentCharacterPdfToFolder();byId("pdfToolbarDownloadBtn").onclick=()=>saveCurrentCharacterPdfToFolder();
-  byId("pdfToolbarPrintBtn").onclick=async()=>{await saveCharacterSheet(false);const bytes=buildEditablePdf(t,c.sheetData||{}),u=URL.createObjectURL(new Blob([bytes],{type:"application/pdf"})),w=window.open(u,"_blank");setTimeout(()=>{try{w?.focus();w?.print()}catch(e){}},1400);setTimeout(()=>URL.revokeObjectURL(u),120000)};
-  byId("pdfToolbarOpenBtn").onclick=()=>byId("openPdfWindowBtn").click();
-  byId("pdfSearchBtn").onclick=()=>{const q=prompt("Find text or a field value in this sheet:");if(!q)return;const needle=q.toLowerCase();const fields=[...r.querySelectorAll(".pdf-field")];const hit=fields.find(el=>String(el.value||el.textContent||"").toLowerCase().includes(needle)||String(el.name||"").toLowerCase().includes(needle));if(hit){hit.scrollIntoView({behavior:"smooth",block:"center"});hit.focus();}else alert("No matching field value was found in the editable sheet.")};
-  updatePdfView();
-  r.querySelectorAll(".pdf-field").forEach(e=>{e.oninput=e.onchange=markSheetDirty});if(c.sheetTemplate==="pulp")bindPulpDerivedFields(r);r.querySelectorAll("[data-pdf-image] input").forEach(e=>e.onchange=()=>applySheetImageUpload(e,e.closest("[data-pdf-image]")));r.querySelectorAll(".pdf-check").forEach(e=>e.onclick=()=>{e.classList.toggle("checked");e.setAttribute("aria-pressed",e.classList.contains("checked"));markSheetDirty()});r.querySelectorAll(".pdf-health-state").forEach(e=>e.onclick=()=>{let n=e.dataset.healthValue||"";n=n===""?"\\":n==="\\"?"X":"";e.dataset.healthValue=n;e.textContent=n;e.className="pdf-field pdf-health-state "+(n==="X"?"health-x":n?"health-slash":"health-empty");markSheetDirty()});
-  sheetDirty=false;sheetSnapshot=JSON.stringify({data:c.sheetData,notes:c.keeperNotes||c.notes||""});
-}
-function decodePdfLiteralString(s){
-  s=String(s||"");let out="";
-  for(let i=0;i<s.length;i++){
-    const ch=s[i];
-    if(ch!=="\\"){out+=ch;continue}
-    if(i+1>=s.length)break;
-    const n=s[++i];
-    if(n==="n")out+="\n";else if(n==="r")out+="\r";else if(n==="t")out+="\t";else if(n==="b")out+="\b";else if(n==="f")out+="\f";
-    else if(n==="\r"){if(s[i+1]==="\n")i++}
-    else if(n==="\n"){}
-    else if(/[0-7]/.test(n)){let oct=n;for(let j=0;j<2&&/[0-7]/.test(s[i+1]||"");j++)oct+=s[++i];out+=String.fromCharCode(parseInt(oct,8))}
-    else out+=n;
-  }
-  return out;
-}
-function decodePdfHexString(s){
-  let h=String(s||"").replace(/\s+/g,"");if(h.length%2)h+="0";
-  const bytes=[];for(let i=0;i<h.length;i+=2)bytes.push(parseInt(h.slice(i,i+2),16)||0);
-  if(bytes[0]===0xFE&&bytes[1]===0xFF){let out="";for(let i=2;i+1<bytes.length;i+=2)out+=String.fromCharCode((bytes[i]<<8)|bytes[i+1]);return out}
-  return String.fromCharCode(...bytes);
-}
-function readPdfToken(body,key){
-  const pos=body.search(new RegExp("/"+key+"(?![A-Za-z0-9])\\s*"));if(pos<0)return undefined;
-  let i=pos+key.length+1;while(/\s/.test(body[i]||""))i++;
-  if(body[i]==="("){
-    let depth=1,raw="";i++;
-    for(;i<body.length&&depth;i++){
-      const ch=body[i];
-      if(ch==="\\"){raw+=ch;if(i+1<body.length)raw+=body[++i];continue}
-      if(ch==="("){depth++;raw+=ch;continue}
-      if(ch===")"){depth--;if(depth)raw+=ch;continue}
-      raw+=ch;
-    }
-    return decodePdfLiteralString(raw);
-  }
-  if(body[i]==="<"&&body[i+1]!=="<"){
-    const stop=body.indexOf(">",i+1);return stop<0?undefined:decodePdfHexString(body.slice(i+1,stop));
-  }
-  if(body[i]==="/"){
-    const m=body.slice(i+1).match(/^([^\s<>\[\]()/%]+)/);return m?m[1]:undefined;
-  }
-  const m=body.slice(i).match(/^([^\s<>\[\]()/%]+)/);return m?m[1]:undefined;
-}
-function extractInteractivePdfValues(bytes){
-  let x="";const step=32768;
-  for(let i=0;i<bytes.length;i+=step)x+=String.fromCharCode(...bytes.subarray(i,i+step));
-  const values={};
-  const objRe=/\d+\s+\d+\s+obj\b([\s\S]*?)endobj/g;let om;
-  while((om=objRe.exec(x))){
-    const body=om[1];
-    const name=readPdfToken(body,"T");if(name===undefined||name==="")continue;
-    const value=readPdfToken(body,"V");if(value!==undefined)values[name]=value;
-  }
-  if(!Object.keys(values).length){
-    const fallback=/\/T\s*\(([^)]*(?:\\.[^)]*)*)\)[\s\S]{0,2000}?\/V\s*(?:\(([^)]*(?:\\.[^)]*)*)\)|\/([A-Za-z0-9_.-]+))/g;let m;
-    while((m=fallback.exec(x)))values[decodePdfLiteralString(m[1])]=m[2]!==undefined?decodePdfLiteralString(m[2]):m[3];
-  }
-  return values;
-}
-async function importCharacterPdf(f,c){
-  try{
-    if(!f||!c)return;
-    const bytes=new Uint8Array(await f.arrayBuffer());
-    if(bytes.length<5||String.fromCharCode(...bytes.subarray(0,5))!=="%PDF-")throw new Error("The selected file is not a valid PDF.");
-    // Import means replace the entire character PDF, regardless of its fields or page layout.
-    // Keep field extraction only as an optional convenience when compatible fields exist.
-    const parsed=extractInteractivePdfValues(bytes);
-    const template=window.SHEET_TEMPLATES?.[c.sheetTemplate];
-    const allowed=new Set((template?.fields||[]).map(q=>q.name));
-    const replacement={};
-    for(const [name,value] of Object.entries(parsed)){
-      if(!allowed.has(name))continue;
-      const field=template.fields.find(q=>q.name===name);
-      if(field?.type==="checkbox"||field?.type==="radio")replacement[name]=!(value===false||value===""||value==="Off"||value==="0"||value===0);
-      else replacement[name]=value;
-    }
-    c.sheetData={};
-    c.importedPdfData="data:application/pdf;base64,"+bytesToBase64(bytes);
-    c.importedPdfName=f.name||"Imported PDF.pdf";
-    c.updatedAt=now();
-    await saveState("Imported PDF replaced character sheet");
-    renderCharacter();
-    requestAnimationFrame(()=>{const stage=document.getElementById("pdfViewerStage");if(stage)stage.scrollTop=0});
-    const input=document.getElementById("importPdfInput");if(input)input.value="";
-    toast("Imported PDF replaced this character's sheet");
-  }catch(e){
-    console.error(e);alert(e?.message||"The PDF could not be imported.");
-  }
-}
-async function resetCharacterPdf(c){if(!c||!confirm("Reset this character’s PDF? This removes the imported PDF, clears saved sheet fields, and restores the original ruleset sheet."))return;c.sheetData={};delete c.importedPdfData;delete c.importedPdfName;c.updatedAt=now();await saveState("Character PDF reset");renderCharacter();toast("Character PDF reset to the blank original")}
-function dataUrlToBytes(uri){const comma=String(uri||"").indexOf(",");if(comma<0)throw new Error("Invalid stored PDF data");const raw=atob(String(uri).slice(comma+1));const out=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);return out;}
-function bytesToBase64(bytes){let s="";const step=32768;for(let i=0;i<bytes.length;i+=step)s+=String.fromCharCode(...bytes.subarray(i,i+step));return btoa(s)}
-function renderPdfSheetPage(template,c,pageIndex){
-  const p=template.pages[pageIndex];
-  const fields=template.fields.filter(f=>f.page===pageIndex);
-  return `<div class="pdf-sheet-page ${pageIndex===0?"pdf-page-active":""} sheet-${template===window.SHEET_TEMPLATES?.gothic?"gothic":"pulp"}" data-page-index="${pageIndex}" style="aspect-ratio:${p.width}/${p.height}"><img src="${p.image}" alt="Character sheet page ${pageIndex+1}">${fields.map(f=>renderPdfField(f,p,c.sheetData?.[f.name])).join("")}</div>`;
-}
-function cleanPdfPromptValue(value){
-  const s=String(value??"");
-  const trimmed=s.trim();
-  if(!trimmed)return "";
-  if(/^\[(?:type|enter|write|insert|click|text|name|value|description|notes?)[^\]]*\]$/i.test(trimmed))return "";
-  if(/^(?:type|enter|write|insert)\s+here$/i.test(trimmed))return "";
-  return s;
-}
-function renderPdfField(f,p,val){
-  const left=f.x/p.width*100,top=f.y/p.height*100,width=f.w/p.width*100,height=f.h/p.height*100;
-  const rawValue=val??f.value??"";
-  const value=cleanPdfPromptValue(rawValue);
-  const baseStyle=`left:${left}%;top:${top}%;width:${width}%;height:${height}%;`;
-
-  if(f.type==="button"){
-    const hasImage=typeof value==="string"&&value.startsWith("data:image/");
-    return `<label class="pdf-image-field" style="${baseStyle}" data-pdf-image="${esc(f.name)}" title="Upload or replace image">
-      ${hasImage?`<img src="${value}" alt="${esc(f.name)}">`:`<span>Tap to add image</span>`}
-      <input type="file" accept="image/*,.jpg,.jpeg,.png,.gif,.webp,.bmp,.svg,.avif,.heic,.heif,.tif,.tiff">
-    </label>`;
-  }
-
-
-  if(/^health\d+$/i.test(f.name)){
-    const healthValue=value==="X"?"X":(value==="\\"?"\\":"");
-    const healthClass=healthValue==="X"?"health-x":(healthValue==="\\"?"health-slash":"health-empty");
-    return `<button type="button" class="pdf-field pdf-health-state ${healthClass}" style="${baseStyle}" data-pdf-field="${esc(f.name)}" data-health-value="${esc(healthValue)}" aria-label="${esc(f.name)}: ${healthValue||"empty"}">${esc(healthValue)}</button>`;
-  }
-
-  if(f.type==="checkbox"||f.type==="radio"){
-    const savedValue=val;
-    const isChecked=savedValue===true||savedValue==="true"||savedValue===1||savedValue==="1"||savedValue==="Yes"||savedValue==="On";
-    return `<button type="button" class="pdf-field pdf-check ${isChecked?"checked":""}" style="${baseStyle}" data-pdf-field="${esc(f.name)}" aria-label="${esc(f.name)}" aria-pressed="${isChecked}" ${f.readonly?"disabled":""}></button>`;
-  }
-
-  const readonly=f.readonly?' readonly aria-readonly="true"':"";
-  const fontCqw=Math.max(.62,Math.min(1.75,(f.h/p.width)*30));
-
-  if(f.type==="select"&&f.options?.length){
-    const listId="pdf-list-"+String(f.name).replace(/[^a-zA-Z0-9_-]/g,"-");
-    const options=[...new Set(f.options.map(o=>String(o)).filter(Boolean))];
-    return `<input class="pdf-field pdf-combo" type="text" list="${listId}" style="${baseStyle}font-size:${fontCqw}cqw;line-height:1;" data-pdf-field="${esc(f.name)}" value="${esc(value)}"${f.readonly?" readonly aria-readonly=\"true\"":""}>`+
+  byId("keeperNotes").oninput=e=>{c.keeperNotes=e.target.value;c.updatedAt=now();saveState("Keeper notes updated")};
+  if(!window.NocturnePdf){byId("nativePdfHost").innerHTML='<div class="notice">The native PDF host is unavailable. This build cannot safely display or save character PDFs.</div>';return}
+  requestAnimationFrame(async()=>{
+    try{
+      const url=await NocturnePdf.ensureCharacterPdf(c.id,ruleset);
+      await NocturnePdf.setActiveCharacter(c.id);
+      const frame=document.createElement("iframe");
+      frame.id="nativeCharacterPdfViewer";
+      frame.title=(c.name||"Character")+" PDF";
+      frame.src=url+"#toolbar=1&navpanes=1&scrollbar=1&view=FitH";
+      frame.style.cssText="display:block;width:100%;height:calc(100vh - 150px);min-height:920px;border:0;background:#252525";
+      const host=byId("nativePdfHost");host.replaceChildren(frame);
+      const reload=next=>{if(next)frame.src=next+"#toolbar=1&navpanes=1&scrollbar=1&view=FitH&v="+Date.now()};
+      byId("openPdfWindowBtn").onclick=()=>window.open(url+"#toolbar=1&navpanes=1&scrollbar=1","_blank");
+      byId("saveSheetBtn").onclick=async()=>{await NocturnePdf.setActiveCharacter(c.id);await NocturnePdf.requestNativeSave(c.id)};
+      byId("importPdfBtn").onclick=async()=>reload(await NocturnePdf.importCharacterPdf(c.id));
+      byId("resetPdfBtn").onclick=async()=>{if(confirm("Reset this character PDF to the untouched bundled default?"))reload(await NocturnePdf.resetCharacterPdf(c.id,ruleset))};
+    }catch(error){console.error(error);byId("nativePdfHost").innerHTML='<div class="notice">The original PDF could not be loaded. Check that the bundled master PDF is present.</div>'}
+  });
+}>`+
       `<datalist id="${listId}">${options.map(o=>`<option value="${esc(o)}"></option>`).join("")}</datalist>`;
   }
 
@@ -3384,5 +3219,69 @@ ensureRelationshipMaps();
 init();
 })();
 </script>
-                                                                                                                                                  </body>
+                                                                                                                                                  
+<script>
+(function(){
+  "use strict";
+  const originalRenderCharacter = window.renderCharacter;
+  if (typeof originalRenderCharacter !== "function") return;
+
+  function currentCharacter(){
+    try { return state.characters.find(c => c.id === state.activeCharacterId) || null; }
+    catch (_) { return null; }
+  }
+  function rulesetFor(c){
+    const raw=String(c?.sheetTemplate||c?.ruleset||c?.game||"").toLowerCase();
+    return raw.includes("pulp")||raw.includes("cthulhu")||raw==="coc" ? "cthulhu" : "vampire";
+  }
+  function safeName(c){
+    return String(c?.name||"character-sheet").replace(/[\\/:*?"<>|]+/g,"-").trim()+".pdf";
+  }
+  async function installNativePdfView(){
+    const c=currentCharacter();
+    if(!c || !window.NocturnePdf) return;
+    const shell=document.querySelector("#characterView .pdf-viewer-shell, #characterView .pdf-viewer-stage") || document.querySelector(".pdf-viewer-shell");
+    if(!shell) return;
+    const url=await NocturnePdf.ensureCharacterPdf(c.id,rulesetFor(c));
+    await NocturnePdf.setActiveCharacter?.(c.id);
+    const frame=document.createElement("iframe");
+    frame.id="nativeCharacterPdfViewer";
+    frame.title=(c.name||"Character")+" PDF";
+    frame.src=url+"#toolbar=1&navpanes=1&scrollbar=1";
+    frame.style.cssText="display:block;width:100%;height:calc(100vh - 150px);min-height:920px;border:0;background:#252525";
+    shell.replaceWith(frame);
+
+    const openBtn=document.getElementById("openPdfWindowBtn");
+    const saveBtn=document.getElementById("saveSheetBtn");
+    const importBtn=document.getElementById("importPdfBtn");
+    const resetBtn=document.getElementById("resetPdfBtn");
+    const hiddenInput=document.getElementById("importPdfInput");
+    if(hiddenInput) hiddenInput.remove();
+
+    if(openBtn) openBtn.onclick=()=>window.open(url+"#toolbar=1&navpanes=1&scrollbar=1","_blank");
+    if(saveBtn) saveBtn.onclick=async()=>{
+      await NocturnePdf.setActiveCharacter?.(c.id);
+      const triggered=await NocturnePdf.requestNativeSave?.(c.id);
+      if(!triggered) await NocturnePdf.exportCharacterPdf(c.id,safeName(c));
+    };
+    if(importBtn) importBtn.onclick=async()=>{
+      const next=await NocturnePdf.importCharacterPdf(c.id);
+      if(next){ frame.src=next+"#toolbar=1&navpanes=1&scrollbar=1&v="+Date.now(); }
+    };
+    if(resetBtn) resetBtn.onclick=async()=>{
+      if(!confirm("Reset this character PDF to the untouched default sheet?")) return;
+      const next=await NocturnePdf.resetCharacterPdf(c.id,rulesetFor(c));
+      if(next){ frame.src=next+"#toolbar=1&navpanes=1&scrollbar=1&v="+Date.now(); }
+    };
+  }
+
+  window.renderCharacter=function(){
+    const out=originalRenderCharacter.apply(this,arguments);
+    Promise.resolve(out).finally(()=>requestAnimationFrame(()=>installNativePdfView().catch(console.error)));
+    return out;
+  };
+})();
+</script>
+
+</body>
 </html>

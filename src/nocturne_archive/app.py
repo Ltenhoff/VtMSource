@@ -6,9 +6,11 @@ import sys
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QUrl, Qt
+from PySide6.QtCore import QObject, QUrl, Qt, Signal, Slot
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import (
     QWebEngineDownloadRequest,
     QWebEnginePage,
@@ -16,6 +18,8 @@ from PySide6.QtWebEngineCore import (
     QWebEngineSettings,
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
+
+from .pdf_store import PdfStore
 
 APP_NAME = "Nocturne Archive"
 DATA_DIR_NAME = "NocturneArchive.Data"
@@ -33,7 +37,7 @@ def executable_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def ensure_runtime_assets() -> tuple[Path, Path]:
+def ensure_runtime_assets() -> tuple[Path, Path, Path, Path]:
     bundle = bundled_root()
     base = executable_root()
     data_root = base / DATA_DIR_NAME
@@ -49,14 +53,80 @@ def ensure_runtime_assets() -> tuple[Path, Path]:
     target_web = runtime / "web"
     target_assets = runtime / "assets"
 
-    # Refresh application files every launch, but never touch BrowserProfile.
     if target_web.exists():
         shutil.rmtree(target_web)
     if target_assets.exists():
         shutil.rmtree(target_assets)
     shutil.copytree(source_web, target_web)
     shutil.copytree(source_assets, target_assets)
-    return target_web / "index.html", profile_dir
+    return target_web / "index.html", profile_dir, data_root, target_assets
+
+
+class PdfBridge(QObject):
+    sheetChanged = Signal(str, str)
+    nativeSaveRequested = Signal()
+
+    def __init__(self, store: PdfStore, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self.store = store
+        self.active_character_id = ""
+
+    @Slot(str, result=bool)
+    def setActiveCharacter(self, character_id: str) -> bool:
+        self.active_character_id = str(character_id or "")
+        return bool(self.active_character_id)
+
+    @Slot(str, result=bool)
+    def requestNativeSave(self, character_id: str) -> bool:
+        self.active_character_id = str(character_id or "")
+        self.nativeSaveRequested.emit()
+        return True
+
+    @Slot(str, str, result=str)
+    def ensureCharacterPdf(self, character_id: str, ruleset: str) -> str:
+        self.active_character_id = str(character_id or "")
+        return QUrl.fromLocalFile(str(self.store.ensure_character_sheet(character_id, ruleset).path)).toString()
+
+    @Slot(str, result=str)
+    def importCharacterPdf(self, character_id: str) -> str:
+        source, _ = QFileDialog.getOpenFileName(None, "Import PDF", "", "PDF files (*.pdf)")
+        if not source:
+            return ""
+        self.active_character_id = str(character_id or "")
+        sheet = self.store.import_pdf(character_id, Path(source))
+        url = QUrl.fromLocalFile(str(sheet.path)).toString()
+        self.sheetChanged.emit(character_id, url)
+        return url
+
+    @Slot(str, str, result=str)
+    def saveCharacterPdfBytes(self, character_id: str, pdf_base64: str) -> str:
+        sheet = self.store.save_base64(character_id, pdf_base64)
+        url = QUrl.fromLocalFile(str(sheet.path)).toString()
+        self.sheetChanged.emit(character_id, url)
+        return url
+
+    @Slot(str, str, result=bool)
+    def exportCharacterPdf(self, character_id: str, suggested_name: str) -> bool:
+        destination, _ = QFileDialog.getSaveFileName(
+            None,
+            "Save Character PDF",
+            suggested_name or "character-sheet.pdf",
+            "PDF files (*.pdf)",
+        )
+        if not destination:
+            return False
+        if not destination.lower().endswith(".pdf"):
+            destination += ".pdf"
+        self.store.export_pdf(character_id, Path(destination))
+        return True
+
+    @Slot(str, str, result=str)
+    def resetCharacterPdf(self, character_id: str, ruleset: str) -> str:
+        self.active_character_id = str(character_id or "")
+        sheet = self.store.reset_pdf(character_id, ruleset)
+        url = QUrl.fromLocalFile(str(sheet.path)).toString()
+        self.sheetChanged.emit(character_id, url)
+        return url
 
 
 class AppPage(QWebEnginePage):
@@ -79,12 +149,13 @@ class BrowserWindow(QWebEngineView):
 
 
 class MainWindow(BrowserWindow):
-    def closeEvent(self, event):  # noqa: N802
-        # Let the web app's beforeunload/save logic run normally.
-        super().closeEvent(event)
+    @Slot()
+    def trigger_pdf_save(self) -> None:
+        self.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+        QTest.keyClick(self, Qt.Key.Key_S, Qt.KeyboardModifier.ControlModifier)
 
 
-def configure_profile(profile_dir: Path) -> QWebEngineProfile:
+def configure_profile(profile_dir: Path, store: PdfStore, bridge: PdfBridge) -> QWebEngineProfile:
     profile = QWebEngineProfile("NocturneArchive", QApplication.instance())
     profile.setPersistentStoragePath(str(profile_dir))
     profile.setCachePath(str(profile_dir / "Cache"))
@@ -101,9 +172,30 @@ def configure_profile(profile_dir: Path) -> QWebEngineProfile:
     settings.setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
 
     def on_download(item: QWebEngineDownloadRequest) -> None:
-        # Qt displays the native save path selected by the web app/browser.
-        if not item.downloadDirectory():
-            item.setDownloadDirectory(str(Path.home() / "Downloads"))
+        suggested = item.downloadFileName() or "character-sheet.pdf"
+        destination, _ = QFileDialog.getSaveFileName(None, "Save PDF", suggested, "PDF files (*.pdf)")
+        if not destination:
+            item.cancel()
+            return
+        if not destination.lower().endswith(".pdf"):
+            destination += ".pdf"
+        target = Path(destination)
+        item.setDownloadDirectory(str(target.parent))
+        item.setDownloadFileName(target.name)
+
+        def completed() -> None:
+            if item.state() != QWebEngineDownloadRequest.DownloadState.DownloadCompleted:
+                return
+            character_id = bridge.active_character_id
+            if not character_id or not target.is_file():
+                return
+            try:
+                sheet = store.import_pdf(character_id, target)
+                bridge.sheetChanged.emit(character_id, QUrl.fromLocalFile(str(sheet.path)).toString())
+            except Exception as exc:  # pragma: no cover - surfaced to user
+                QMessageBox.warning(None, APP_NAME, f"The PDF was saved locally, but its character copy could not be updated.\n\n{exc}")
+
+        item.stateChanged.connect(completed)
         item.accept()
 
     profile.downloadRequested.connect(on_download)
@@ -119,7 +211,12 @@ def write_startup_error(exc: BaseException) -> Path:
 
 
 def main() -> int:
-    os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-features=msSmartScreenProtection")
+    os.environ.setdefault(
+        "QTWEBENGINE_CHROMIUM_FLAGS",
+        "--disable-features=msSmartScreenProtection,Vulkan --disable-gpu-driver-bug-workarounds --use-angle=d3d11",
+    )
+    os.environ.setdefault("QT_OPENGL", "angle")
+
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
@@ -131,9 +228,19 @@ def main() -> int:
     app._nocturne_windows = []  # type: ignore[attr-defined]
 
     try:
-        index_file, profile_dir = ensure_runtime_assets()
-        profile = configure_profile(profile_dir)
+        index_file, profile_dir, data_root, runtime_assets = ensure_runtime_assets()
+        store = PdfStore(data_root, runtime_assets)
+        bridge = PdfBridge(store)
+        profile = configure_profile(profile_dir, store, bridge)
+
         window = MainWindow(profile)
+        bridge.nativeSaveRequested.connect(window.trigger_pdf_save)
+        channel = QWebChannel(window.page())
+        channel.registerObject("pdfBridge", bridge)
+        window.page().setWebChannel(channel)
+        window._pdf_bridge = bridge  # type: ignore[attr-defined]
+        window._web_channel = channel  # type: ignore[attr-defined]
+
         window.resize(1500, 950)
         window.show()
         window.load(QUrl.fromLocalFile(str(index_file)))
