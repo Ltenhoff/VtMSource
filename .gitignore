@@ -1,10 +1,7 @@
 .venv/
-.tools/
 build/
 dist/
-*.spec.bak
 __pycache__/
-*.py[cod]
+*.pyc
+.tools/
 NocturneArchive.Data/
-.DS_Store
-Thumbs.db
