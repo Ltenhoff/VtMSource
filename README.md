@@ -68,3 +68,15 @@ NocturneArchive-Windows
 
 Keep the existing hidden `.git` folder. Delete everything else in the repository directory.
 Paste all contents of this package into that directory, then commit and push.
+
+
+## Responsive display update
+
+- Main window opens relative to the monitor's available workspace
+- Minimum supported application size reduced to 820 × 600
+- Left navigation rail is resizable instead of fixed width
+- Main content and sidebar use adjustable splitter proportions
+- Character portrait and controls resize with available width
+- Portraits retain their aspect ratio
+- Embedded PDF height adapts better to smaller displays
+- Character-list entries display their stored portrait as an icon

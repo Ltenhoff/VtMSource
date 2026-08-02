@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer, QUrl, QPointF, QRectF, QMimeData, Signal
+from PySide6.QtCore import Qt, QTimer, QUrl, QPointF, QRectF, QMimeData, Signal, QSize
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QBrush, QPixmap, QPainterPath, QPolygonF, QDrag, QFont
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QGridLayout,
@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QStackedWidget, QScrollArea, QFrame, QFormLayout, QDialog, QDialogButtonBox,
     QFileDialog, QMessageBox, QSplitter, QGraphicsView, QGraphicsScene,
     QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsLineItem, QGraphicsObject, QGraphicsItem, QInputDialog,
-    QTableWidget, QTableWidgetItem, QHeaderView, QToolBar, QGroupBox, QAbstractItemView
+    QTableWidget, QTableWidgetItem, QHeaderView, QToolBar, QGroupBox, QAbstractItemView, QSizePolicy
 )
 from PySide6.QtWebEngineCore import (
     QWebEngineProfile, QWebEngineSettings, QWebEngineDownloadRequest, QWebEnginePage
@@ -33,16 +33,16 @@ VTM_PDF = "V20_Vampire35thAnniversary_4-Page_Interactive.pdf"
 COC_PDF = "CoC7_Pulp_Default_Interactive.pdf"
 
 STYLE = """
-QWidget { background:#0c110f; color:#e6dfce; font-family: Georgia, 'Times New Roman', serif; font-size:14px; }
+QWidget { background:#0c110f; color:#e6dfce; font-family: Georgia, 'Times New Roman', serif; font-size:13px; }
 QMainWindow { background:#0b100e; }
 QFrame#TopBar { background:#111713; border-bottom:1px solid #455047; }
-QLabel#Brand { font-size:22px; letter-spacing:2px; color:#eee9dc; font-weight:600; }
+QLabel#Brand { font-size:20px; letter-spacing:2px; color:#eee9dc; font-weight:600; }
 QPushButton { background:#15201b; color:#f2ead8; border:1px solid #536158; padding:8px 13px; }
 QPushButton:hover { background:#24352c; border-color:#8b9b90; }
 QPushButton:pressed { background:#31453a; }
 QPushButton#Primary { background:#526d5e; border-color:#8ca093; font-weight:600; }
 QPushButton#Danger { background:#2b1719; border-color:#76464b; color:#efc7c7; }
-QPushButton#Nav { border:none; border-bottom:2px solid transparent; background:transparent; padding:16px 14px; font-size:16px; color:#b9bdb5; }
+QPushButton#Nav { border:none; border-bottom:2px solid transparent; background:transparent; padding:12px 9px; font-size:14px; color:#b9bdb5; }
 QPushButton#Nav:hover { color:#fff; }
 QPushButton#Nav[active="true"] { color:#fff; border-bottom-color:#a5b5aa; }
 QLineEdit, QTextEdit, QComboBox { background:#0a0f0d; border:1px solid #46534b; color:#eee6d5; padding:8px; selection-background-color:#556b5e; }
@@ -54,7 +54,7 @@ QScrollArea { border:none; }
 QFrame#Card { background:#101713; border:1px solid #46534b; border-radius:12px; }
 QFrame#Banner { background:#211313; border:1px solid #5d4b45; border-radius:16px; }
 QLabel#Eyebrow { color:#c58b53; font-size:13px; letter-spacing:2px; font-weight:600; }
-QLabel#PageTitle { color:#f1e6cf; font-size:25px; font-weight:700; }
+QLabel#PageTitle { color:#f1e6cf; font-size:22px; font-weight:700; }
 QLabel#SectionTitle { color:#e6c79b; font-size:19px; font-weight:700; }
 QLabel#Hint { color:#c5aa79; font-size:12px; }
 QGroupBox { border:1px solid #3f4d45; margin-top:12px; padding-top:16px; }
@@ -1145,6 +1145,39 @@ class RelationshipMapWidget(QWidget):
         self.draw_edges()
 
 
+
+class ResponsivePortraitLabel(QLabel):
+    """Portrait label that scales without distortion as the window changes size."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._source = QPixmap()
+        self.setAlignment(Qt.AlignCenter)
+        self.setMinimumSize(200, 250)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+    def setSourcePixmap(self, pixmap):
+        self._source = QPixmap(pixmap)
+        self._rescale()
+
+    def clear(self):
+        self._source = QPixmap()
+        super().clear()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._rescale()
+
+    def _rescale(self):
+        if not self._source.isNull() and self.width() > 1 and self.height() > 1:
+            super().setPixmap(
+                self._source.scaled(
+                    self.size(),
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation
+                )
+            )
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1155,8 +1188,11 @@ class MainWindow(QMainWindow):
         self.current_planner_section = "Campaign Identity"
         self.loading = False
         self.setWindowTitle(APP_NAME)
-        self.resize(1500, 950)
-        self.setMinimumSize(1100, 720)
+        screen = QApplication.primaryScreen().availableGeometry()
+        initial_width = min(1500, max(900, int(screen.width() * 0.90)))
+        initial_height = min(950, max(650, int(screen.height() * 0.88)))
+        self.resize(initial_width, initial_height)
+        self.setMinimumSize(820, 600)
         self.setWindowIcon(QIcon(str(bundle_root() / "assets" / "NocturneArchive-V.ico")))
         self.setStyleSheet(STYLE)
         self.autosave = QTimer(self)
@@ -1167,12 +1203,16 @@ class MainWindow(QMainWindow):
         root = QWidget(); self.setCentralWidget(root)
         outer = QVBoxLayout(root); outer.setContentsMargins(0,0,0,0); outer.setSpacing(0)
         outer.addWidget(self.topbar())
-        body = QSplitter()
+        body = QSplitter(Qt.Horizontal)
+        body.setChildrenCollapsible(False)
         body.addWidget(self.sidebar())
         self.pages = QStackedWidget()
         body.addWidget(self.pages)
+        body.setStretchFactor(0, 0)
         body.setStretchFactor(1, 1)
+        body.setSizes([285, max(600, initial_width - 285)])
         outer.addWidget(body, 1)
+        self.main_splitter = body
         self.build_pages()
         self.refresh_chronicles()
         self.switch_page(0)
@@ -1191,7 +1231,7 @@ class MainWindow(QMainWindow):
         return frame
 
     def sidebar(self):
-        frame = QFrame(); frame.setFixedWidth(305)
+        frame = QFrame(); frame.setMinimumWidth(230); frame.setMaximumWidth(350)
         layout = QVBoxLayout(frame); layout.setContentsMargins(12,18,12,12)
         brand = QLabel("NOCTURNE ARCHIVE"); brand.setObjectName("Brand"); layout.addWidget(brand)
 
@@ -1229,6 +1269,8 @@ class MainWindow(QMainWindow):
         char_actions.addWidget(clone_char)
         layout.addLayout(char_actions)
         self.charlist = CharacterListWidget()
+        self.charlist.setIconSize(QSize(48, 48))
+        self.charlist.setSpacing(2)
         self.charlist.setDragEnabled(True)
         self.charlist.currentItemChanged.connect(self.choose_character)
         self.charlist.itemClicked.connect(self.character_list_clicked)
@@ -1249,7 +1291,7 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.tools_page())
 
     def wrap(self, inner):
-        area = QScrollArea(); area.setWidgetResizable(True); area.setWidget(inner); return area
+        area = QScrollArea(); area.setWidgetResizable(True); area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded); area.setWidget(inner); return area
 
     def banner(self, eyebrow, title, description):
         frame = QFrame(); frame.setObjectName("Banner")
@@ -1349,21 +1391,31 @@ class MainWindow(QMainWindow):
 
         card = QFrame()
         card.setObjectName("Card")
-        grid = QGridLayout(card)
+        card_layout = QHBoxLayout(card)
 
-        self.portrait = QLabel()
-        self.portrait.setFixedSize(420, 520)
-        self.portrait.setScaledContents(True)
-        grid.addWidget(self.portrait, 0, 0, 8, 1)
+        character_splitter = QSplitter(Qt.Horizontal)
+        character_splitter.setChildrenCollapsible(False)
+
+        portrait_panel = QWidget()
+        portrait_layout = QVBoxLayout(portrait_panel)
+        portrait_layout.setContentsMargins(0, 0, 0, 0)
+        self.portrait = ResponsivePortraitLabel()
+        portrait_layout.addWidget(self.portrait, 1)
+
+        details_panel = QWidget()
+        details_layout = QVBoxLayout(details_panel)
+        details_layout.setContentsMargins(0, 0, 0, 0)
 
         self.charinfo = QTextEdit()
         self.charinfo.setReadOnly(True)
-        grid.addWidget(self.charinfo, 0, 1)
+        self.charinfo.setMinimumHeight(130)
+        self.charinfo.setMaximumHeight(230)
+        details_layout.addWidget(self.charinfo)
 
         self.pdf_status = QLabel("No character sheet selected.")
         self.pdf_status.setWordWrap(True)
         self.pdf_status.setObjectName("Hint")
-        grid.addWidget(self.pdf_status, 1, 1)
+        details_layout.addWidget(self.pdf_status)
 
         actions = [
             ("Edit Identity", self.edit_character),
@@ -1374,13 +1426,21 @@ class MainWindow(QMainWindow):
             ("Clone Character", self.clone_character),
             ("Delete Character", self.delete_character),
         ]
-        for row, (title, callback) in enumerate(actions, 2):
+        for title, callback in actions:
             button = QPushButton(title)
             if title == "Delete Character":
                 button.setObjectName("Danger")
             button.clicked.connect(callback)
-            grid.addWidget(button, row, 1)
+            details_layout.addWidget(button)
+        details_layout.addStretch()
 
+        character_splitter.addWidget(portrait_panel)
+        character_splitter.addWidget(details_panel)
+        character_splitter.setStretchFactor(0, 3)
+        character_splitter.setStretchFactor(1, 2)
+        character_splitter.setSizes([460, 360])
+
+        card_layout.addWidget(character_splitter)
         layout.addWidget(card)
 
         sheet_card = QFrame()
@@ -1399,7 +1459,7 @@ class MainWindow(QMainWindow):
 
         self.embedded_pdf = QWebEngineView()
         self.embedded_pdf.setPage(QWebEnginePage(self.embedded_pdf_profile, self.embedded_pdf))
-        self.embedded_pdf.setMinimumHeight(900)
+        self.embedded_pdf.setMinimumHeight(520)
         sheet_layout.addWidget(self.embedded_pdf)
         layout.addWidget(sheet_card)
 
@@ -1577,15 +1637,38 @@ class MainWindow(QMainWindow):
         self.charlist.clear()
         term = self.search.text().strip().lower()
         for char in self.store.characters(self.cid):
-            if term and term not in char.name.lower(): continue
-            item = QListWidgetItem(f"{char.name}\n{char.role} · {char.condition}\n{char.ruleset}")
+            if term and term not in char.name.lower():
+                continue
+
+            item = QListWidgetItem(
+                f"{char.name}\n{char.role} · {char.condition}\n{char.ruleset}"
+            )
             item.setData(Qt.UserRole, char.id)
+            item.setSizeHint(QSize(0, 66))
+
+            if char.portrait and Path(char.portrait).is_file():
+                source = QPixmap(char.portrait)
+                if not source.isNull():
+                    icon_size = 48
+                    scaled = source.scaled(
+                        icon_size,
+                        icon_size,
+                        Qt.KeepAspectRatioByExpanding,
+                        Qt.SmoothTransformation
+                    )
+                    x = max(0, (scaled.width() - icon_size) // 2)
+                    y = max(0, (scaled.height() - icon_size) // 2)
+                    cropped = scaled.copy(x, y, icon_size, icon_size)
+                    item.setIcon(QIcon(cropped))
+
             self.charlist.addItem(item)
+
         self.charlist.blockSignals(False)
         if self.charid:
             for i in range(self.charlist.count()):
                 if self.charlist.item(i).data(Qt.UserRole) == self.charid:
-                    self.charlist.setCurrentRow(i); break
+                    self.charlist.setCurrentRow(i)
+                    break
 
     def character_list_clicked(self, item):
         if not item:
@@ -1685,7 +1768,7 @@ class MainWindow(QMainWindow):
             f"Concept: {char.concept}\nClan / Occupation: {char.clan}\nCondition: {char.condition}"
         )
         if char.portrait and Path(char.portrait).is_file():
-            self.portrait.setPixmap(QPixmap(char.portrait))
+            self.portrait.setSourcePixmap(QPixmap(char.portrait))
         else:
             self.portrait.clear()
         try:
