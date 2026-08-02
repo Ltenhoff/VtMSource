@@ -842,8 +842,28 @@ class RelationshipMapWidget(QWidget):
         char = chars.get(char_id)
         if not char:
             return
+        if self.mode == "Private" and self.private_character_id and char_id != self.private_character_id:
+            owner = chars.get(self.private_character_id)
+            owner_name = owner.name if owner else "this character"
+            answer = QMessageBox.question(
+                self,
+                APP_NAME,
+                f"Add {char.name} to {owner_name}'s private relationship map?"
+            )
+            if answer != QMessageBox.Yes:
+                return
         data = self.current_data()
-        data["nodes"][char_id] = {"x":pos.x(),"y":pos.y()}
+        occupied = [
+            QPointF(float(p.get("x",0)), float(p.get("y",0)))
+            for key, p in data.get("nodes",{}).items()
+            if key != char_id
+        ]
+        spawn = QPointF(pos)
+        step = 0
+        while any((spawn - existing).manhattanLength() < 110 for existing in occupied):
+            step += 1
+            spawn = QPointF(pos.x() + (step % 4) * 120, pos.y() + (step // 4) * 120)
+        data["nodes"][char_id] = {"x":spawn.x(),"y":spawn.y()}
         self.store.save()
         self.load_current()
 
@@ -1000,7 +1020,7 @@ class RelationshipMapWidget(QWidget):
             dst_map["edges"].append({"source":source_id,"target":target_id,"type":mirrored,"note":note[:20],"side":"B"})
 
         self.store.save()
-        self.load_current()
+        self.draw_edges()
 
     def import_private_group(self):
         if self.mode != "Campaign":
@@ -1049,7 +1069,7 @@ class RelationshipMapWidget(QWidget):
             data["edges"].append(dict(edge))
 
         self.store.save()
-        self.load_current()
+        self.draw_edges()
 
     def remove_selected(self):
         selected = self.selected_nodes_or_groups()
@@ -1089,7 +1109,7 @@ class RelationshipMapWidget(QWidget):
                         m["nodes"].pop(removed,None)
 
         self.store.save()
-        self.load_current()
+        self.draw_edges()
 
     def save_current(self):
         if not self.chronicle_provider():
@@ -1122,7 +1142,7 @@ class RelationshipMapWidget(QWidget):
             group_data["nodes"] = member_positions
 
         self.store.save()
-        self.load_current()
+        self.draw_edges()
 
 
 class MainWindow(QMainWindow):
@@ -1206,12 +1226,13 @@ class MainWindow(QMainWindow):
         char_row.addWidget(add); char_row.addWidget(show); layout.addLayout(char_row)
         char_actions = QHBoxLayout()
         clone_char = QPushButton("Clone Character"); clone_char.clicked.connect(self.clone_character)
-        sheet_char = QPushButton("Open Sheet"); sheet_char.clicked.connect(self.open_sheet)
-        char_actions.addWidget(clone_char); char_actions.addWidget(sheet_char); layout.addLayout(char_actions)
+        char_actions.addWidget(clone_char)
+        layout.addLayout(char_actions)
         self.charlist = CharacterListWidget()
         self.charlist.setDragEnabled(True)
         self.charlist.currentItemChanged.connect(self.choose_character)
-        self.charlist.itemDoubleClicked.connect(lambda _: self.open_sheet())
+        self.charlist.itemClicked.connect(self.character_list_clicked)
+        self.charlist.itemDoubleClicked.connect(self.character_list_double_clicked)
         layout.addWidget(self.charlist, 1)
         layout.addWidget(QLabel("Chronicles and uploaded images are stored persistently on this device."))
         return frame
@@ -1322,12 +1343,14 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(inner)
         self.char_banner = self.banner(
             "Character", "No character selected",
-            "Identity, portrait, condition, and the character's actual stored PDF."
+            "Identity, portrait, condition, and the character's persistent editable PDF."
         )
         layout.addWidget(self.char_banner)
 
-        card = QFrame(); card.setObjectName("Card")
+        card = QFrame()
+        card.setObjectName("Card")
         grid = QGridLayout(card)
+
         self.portrait = QLabel()
         self.portrait.setFixedSize(420, 520)
         self.portrait.setScaledContents(True)
@@ -1344,7 +1367,6 @@ class MainWindow(QMainWindow):
 
         actions = [
             ("Edit Identity", self.edit_character),
-            ("Open PDF Window", self.open_sheet),
             ("Open PDF in Default Viewer", self.open_char_pdf_external),
             ("Import Any PDF", self.import_char_pdf),
             ("Export Stored PDF", self.export_char_pdf),
@@ -1360,7 +1382,27 @@ class MainWindow(QMainWindow):
             grid.addWidget(button, row, 1)
 
         layout.addWidget(card)
-        layout.addStretch()
+
+        sheet_card = QFrame()
+        sheet_card.setObjectName("Card")
+        sheet_layout = QVBoxLayout(sheet_card)
+        sheet_title = QLabel("Character Sheet")
+        sheet_title.setObjectName("SectionTitle")
+        sheet_layout.addWidget(sheet_title)
+
+        self.embedded_pdf_profile = QWebEngineProfile("embedded-character-sheet", self)
+        self.embedded_pdf_profile.setPersistentStoragePath(str(data_root() / "EmbeddedPdfProfile"))
+        embedded_settings = self.embedded_pdf_profile.settings()
+        embedded_settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, True)
+        embedded_settings.setAttribute(QWebEngineSettings.WebAttribute.PdfViewerEnabled, True)
+        self.embedded_pdf_profile.downloadRequested.connect(self.embedded_pdf_download)
+
+        self.embedded_pdf = QWebEngineView()
+        self.embedded_pdf.setPage(self.embedded_pdf_profile.newPage())
+        self.embedded_pdf.setMinimumHeight(900)
+        sheet_layout.addWidget(self.embedded_pdf)
+        layout.addWidget(sheet_card)
+
         return self.wrap(inner)
 
     def manager_page(self, title, description, columns):
@@ -1545,6 +1587,65 @@ class MainWindow(QMainWindow):
                 if self.charlist.item(i).data(Qt.UserRole) == self.charid:
                     self.charlist.setCurrentRow(i); break
 
+    def character_list_clicked(self, item):
+        if not item:
+            return
+        self.charid = item.data(Qt.UserRole) or ""
+        self.refresh_character_view()
+        self.switch_page(3)
+
+    def character_list_double_clicked(self, item):
+        if not item:
+            return
+        self.charid = item.data(Qt.UserRole) or ""
+        self.refresh_character_view()
+        self.switch_page(3)
+
+    def load_embedded_pdf(self):
+        char = self.current_character()
+        if not hasattr(self, "embedded_pdf"):
+            return
+        if not char:
+            self.embedded_pdf.setHtml(
+                "<html><body style='background:#0c110f;color:#e6dfce;font-family:Georgia;'>"
+                "<h2>No character selected</h2><p>Select a character from the left pane.</p>"
+                "</body></html>"
+            )
+            return
+        try:
+            pdf = self.store.char_pdf(char)
+            self.embedded_pdf.load(QUrl.fromLocalFile(str(pdf)))
+        except Exception as exc:
+            self.embedded_pdf.setHtml(
+                f"<html><body style='background:#0c110f;color:#e6dfce;font-family:Georgia;'>"
+                f"<h2>PDF unavailable</h2><pre>{exc}</pre></body></html>"
+            )
+
+    def embedded_pdf_download(self, item):
+        char = self.current_character()
+        if not char:
+            item.cancel()
+            return
+        suggested = item.downloadFileName() or f"{char.name}.pdf"
+        path, _ = QFileDialog.getSaveFileName(self, "Save PDF", suggested, "PDF (*.pdf)")
+        if not path:
+            item.cancel()
+            return
+        if not path.lower().endswith(".pdf"):
+            path += ".pdf"
+        target = Path(path)
+        item.setDownloadDirectory(str(target.parent))
+        item.setDownloadFileName(target.name)
+
+        def complete(state):
+            if state == QWebEngineDownloadRequest.DownloadState.DownloadCompleted and target.exists():
+                self.store.replace_pdf(char, target)
+                self.load_embedded_pdf()
+                self.refresh_character_view()
+
+        item.stateChanged.connect(complete)
+        item.accept()
+
     def select_character_in_list(self, char_id):
         for index in range(self.charlist.count()):
             item = self.charlist.item(index)
@@ -1577,6 +1678,7 @@ class MainWindow(QMainWindow):
             self.charinfo.clear()
             self.portrait.clear()
             self.pdf_status.setText("No character sheet selected.")
+            self.load_embedded_pdf()
             return
         self.charinfo.setPlainText(
             f"Ruleset: {char.ruleset}\nRole: {char.role}\nPlayer: {char.player}\n"
@@ -1594,6 +1696,7 @@ class MainWindow(QMainWindow):
             )
         except Exception as exc:
             self.pdf_status.setText(f"PDF unavailable: {exc}")
+        self.load_embedded_pdf()
 
     def load_planner_fields(self):
         chronicle = self.current_chronicle()
@@ -1793,15 +1896,12 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, APP_NAME, str(exc))
 
     def open_sheet(self):
-        char = self.current_character()
-        if not char:
-            QMessageBox.information(self, APP_NAME, "Select a character first."); return
-        try:
-            window = PdfWindow(self.store, char, self)
-            self.pdfwins.append(window)
-            window.show()
-        except Exception as exc:
-            QMessageBox.critical(self, APP_NAME, f"Could not open the PDF:\n{exc}")
+        # Legacy entry point now focuses the embedded sheet on the Character page.
+        if not self.current_character():
+            QMessageBox.information(self, APP_NAME, "Select a character first.")
+            return
+        self.switch_page(3)
+        self.load_embedded_pdf()
 
     def import_char_pdf(self):
         char = self.current_character()
@@ -1812,6 +1912,7 @@ class MainWindow(QMainWindow):
             try:
                 self.store.replace_pdf(char, path)
                 self.refresh_character_view()
+                self.load_embedded_pdf()
             except Exception as exc:
                 QMessageBox.critical(self, APP_NAME, str(exc))
 
@@ -1823,6 +1924,7 @@ class MainWindow(QMainWindow):
             try:
                 self.store.reset_pdf(char)
                 self.refresh_character_view()
+                self.load_embedded_pdf()
             except Exception as exc:
                 QMessageBox.critical(self, APP_NAME, str(exc))
 

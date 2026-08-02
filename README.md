@@ -28,3 +28,17 @@ Output:
 - Investigator history with add/edit/delete
 - Assets copied into managed storage, opened, and deleted
 - Persistent user-owned storage in NocturneArchive.PY.Data
+
+
+## Character-page and relationship UX corrections
+
+- Single-clicking a character in the left pane selects it and opens the Character tab
+- Double-clicking a character also opens the Character tab, never the PDF window
+- The character's actual persistent PDF is embedded directly below the identity card
+- Imported and reset PDFs immediately reload in the embedded viewer
+- Removed redundant separate Open PDF Window control
+- Default-viewer opening remains available
+- Relationship edits redraw lines without resetting user-dragged node positions
+- New nodes avoid overlap on spawn
+- Dragging another character into a private map requires confirmation
+- Relationship-map interactions never change the selected character in the left pane
