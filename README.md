@@ -93,3 +93,18 @@ Paste all contents of this package into that directory, then commit and push.
 - Map image backgrounds
 - Select, freehand, line, rectangle, ellipse, and text drawing tools
 - Persistent drawing color, geometry, text, and map backgrounds
+
+
+## Campaign ownership and Show All correction
+
+- Current Campaign mode strictly shows only characters owned by the selected campaign
+- Show All clears stale search text and lists characters from every campaign
+- Every Show All entry visibly includes its campaign name
+- Selecting a character from Show All switches the campaign selector to that character's owner
+- The Character page then opens for the correct campaign and character
+- Manually selecting another campaign returns the list to Current Campaign mode
+
+
+## Startup fix
+- Restored all embedded PDF helper methods inside `MainWindow`
+- Validated every directly connected callback before packaging

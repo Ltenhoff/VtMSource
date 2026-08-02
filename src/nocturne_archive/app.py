@@ -1485,7 +1485,7 @@ class MainWindow(QMainWindow):
         return frame
 
     def sidebar(self):
-        frame = QFrame(); frame.setMinimumWidth(230); frame.setMaximumWidth(350)
+        frame = QFrame(); frame.setMinimumWidth(255); frame.setMaximumWidth(390)
         layout = QVBoxLayout(frame); layout.setContentsMargins(12,18,12,12)
         brand = QLabel("NOCTURNE ARCHIVE"); brand.setObjectName("Brand"); layout.addWidget(brand)
 
@@ -1518,6 +1518,7 @@ class MainWindow(QMainWindow):
         add = QPushButton("New Character"); add.setObjectName("Primary"); add.clicked.connect(self.add_character)
         self.show_all_button = QPushButton("Show All")
         self.show_all_button.setCheckable(True)
+        self.show_all_button.setMinimumWidth(112)
         self.show_all_button.toggled.connect(self.toggle_show_all)
         char_row.addWidget(add); char_row.addWidget(self.show_all_button); layout.addLayout(char_row)
         char_actions = QHBoxLayout()
@@ -1933,86 +1934,168 @@ class MainWindow(QMainWindow):
         self.refresh_views()
 
     def choose_chronicle(self, index):
-        if self.loading: return
+        if self.loading:
+            return
         self.persist_current()
         self.cid = self.chronicles.itemData(index) or ""
         self.charid = ""
         self.store.db["last_chronicle"] = self.cid
         self.store.save()
+
+        # Manually changing campaigns returns the list to that campaign.
+        if self.show_all_characters:
+            self.show_all_characters = False
+            self.show_all_button.blockSignals(True)
+            self.show_all_button.setChecked(False)
+            self.show_all_button.setText("Show All")
+            self.show_all_button.blockSignals(False)
+
         self.refresh_characters()
         self.refresh_views()
 
     def toggle_show_all(self, checked):
         self.show_all_characters = bool(checked)
-        self.show_all_button.setText("Current Campaign" if checked else "Show All")
+        if checked:
+            # "Show All" means all characters, not all characters still filtered by stale search text.
+            self.search.blockSignals(True)
+            self.search.clear()
+            self.search.blockSignals(False)
+            self.show_all_button.setText("Current Campaign")
+            self.show_all_button.setToolTip("Return to characters in the selected campaign")
+        else:
+            self.show_all_button.setText("Show All")
+            self.show_all_button.setToolTip("Show characters from every campaign")
         self.refresh_characters()
 
     def refresh_characters(self):
         self.charlist.blockSignals(True)
         self.charlist.clear()
+
         term = self.search.text().strip().lower()
         campaigns = {c.id: c.name for c in self.store.chronicles()}
-        rows = self.store.characters() if self.show_all_characters else self.store.characters(self.cid)
+
+        if self.show_all_characters:
+            rows = self.store.characters()
+        else:
+            # Never allow a character from another campaign into the current-campaign list.
+            rows = [
+                char for char in self.store.characters()
+                if char.chronicle_id == self.cid
+            ]
+
+        rows.sort(key=lambda char: (
+            campaigns.get(char.chronicle_id, "").lower(),
+            char.name.lower()
+        ))
 
         for char in rows:
-            campaign = campaigns.get(char.chronicle_id, "Unknown Campaign")
-            haystack = f"{char.name} {char.role} {char.condition} {char.ruleset} {campaign}".lower()
-            if term and term not in haystack:
+            campaign_name = campaigns.get(char.chronicle_id, "Unknown Campaign")
+            searchable = (
+                f"{char.name} {char.role} {char.condition} "
+                f"{char.ruleset} {campaign_name}"
+            ).lower()
+            if term and term not in searchable:
                 continue
-            item = QListWidgetItem(
-                f"{char.name}\n{char.role} · {char.condition}\n{char.ruleset} — {campaign}"
-            )
+
+            if self.show_all_characters:
+                text = (
+                    f"{char.name}\n"
+                    f"{char.role} · {char.condition}\n"
+                    f"{char.ruleset} — {campaign_name}"
+                )
+            else:
+                text = (
+                    f"{char.name}\n"
+                    f"{char.role} · {char.condition}\n"
+                    f"{char.ruleset}"
+                )
+
+            item = QListWidgetItem(text)
             item.setData(Qt.UserRole, char.id)
             item.setData(Qt.UserRole + 1, char.chronicle_id)
-            item.setSizeHint(QSize(0, 70))
+            item.setToolTip(f"Campaign: {campaign_name}")
+            item.setSizeHint(QSize(0, 72 if self.show_all_characters else 66))
+
             if char.portrait and Path(char.portrait).is_file():
                 pix = QPixmap(char.portrait)
                 if not pix.isNull():
-                    pix = pix.scaled(48, 48, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-                    x = max(0, (pix.width()-48)//2)
-                    y = max(0, (pix.height()-48)//2)
+                    pix = pix.scaled(
+                        48, 48,
+                        Qt.KeepAspectRatioByExpanding,
+                        Qt.SmoothTransformation
+                    )
+                    x = max(0, (pix.width() - 48) // 2)
+                    y = max(0, (pix.height() - 48) // 2)
                     item.setIcon(QIcon(pix.copy(x, y, 48, 48)))
+
             self.charlist.addItem(item)
 
         self.charlist.blockSignals(False)
+
         if self.charid:
             for i in range(self.charlist.count()):
                 if self.charlist.item(i).data(Qt.UserRole) == self.charid:
                     self.charlist.setCurrentRow(i)
                     break
 
-    def character_list_clicked(self, item):
+    def activate_character_item(self, item):
         if not item:
             return
-        self.charid = item.data(Qt.UserRole) or ""
-        self.refresh_character_view()
+
+        char_id = item.data(Qt.UserRole) or ""
+        character_campaign_id = item.data(Qt.UserRole + 1) or ""
+
+        # In Show All mode, selecting a character changes the active campaign to the one
+        # that actually owns that character before opening the Character page.
+        if character_campaign_id and character_campaign_id != self.cid:
+            self.persist_current()
+            index = self.chronicles.findData(character_campaign_id)
+            if index >= 0:
+                self.loading = True
+                self.chronicles.setCurrentIndex(index)
+                self.cid = character_campaign_id
+                self.store.db["last_chronicle"] = self.cid
+                self.store.save()
+                self.loading = False
+
+        self.charid = char_id
+        self.refresh_views()
+        self.refresh_characters()
+        self.select_character_in_list(char_id)
         self.switch_page(3)
+
+    def character_list_clicked(self, item):
+        self.activate_character_item(item)
 
     def character_list_double_clicked(self, item):
-        if not item:
-            return
-        self.charid = item.data(Qt.UserRole) or ""
-        self.refresh_character_view()
-        self.switch_page(3)
+        self.activate_character_item(item)
 
     def load_embedded_pdf(self):
-        char = self.current_character()
         if not hasattr(self, "embedded_pdf"):
             return
+
+        char = self.current_character()
         if not char:
             self.embedded_pdf.setHtml(
-                "<html><body style='background:#0c110f;color:#e6dfce;font-family:Georgia;'>"
-                "<h2>No character selected</h2><p>Select a character from the left pane.</p>"
+                "<html><body style='background:#0c110f;color:#e6dfce;"
+                "font-family:Georgia;padding:24px;'>"
+                "<h2>No character selected</h2>"
+                "<p>Select a character from the left pane.</p>"
                 "</body></html>"
             )
             return
+
         try:
-            pdf = self.store.char_pdf(char)
-            self.embedded_pdf.load(QUrl.fromLocalFile(str(pdf)))
+            pdf_path = self.store.char_pdf(char)
+            self.embedded_pdf.load(QUrl.fromLocalFile(str(pdf_path)))
         except Exception as exc:
+            safe_error = str(exc).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             self.embedded_pdf.setHtml(
-                f"<html><body style='background:#0c110f;color:#e6dfce;font-family:Georgia;'>"
-                f"<h2>PDF unavailable</h2><pre>{exc}</pre></body></html>"
+                "<html><body style='background:#0c110f;color:#e6dfce;"
+                "font-family:Georgia;padding:24px;'>"
+                "<h2>PDF unavailable</h2>"
+                f"<pre>{safe_error}</pre>"
+                "</body></html>"
             )
 
     def embedded_pdf_download(self, item):
@@ -2020,25 +2103,50 @@ class MainWindow(QMainWindow):
         if not char:
             item.cancel()
             return
+
         suggested = item.downloadFileName() or f"{char.name}.pdf"
-        path, _ = QFileDialog.getSaveFileName(self, "Save PDF", suggested, "PDF (*.pdf)")
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save PDF",
+            suggested,
+            "PDF (*.pdf)"
+        )
         if not path:
             item.cancel()
             return
+
         if not path.lower().endswith(".pdf"):
             path += ".pdf"
+
         target = Path(path)
         item.setDownloadDirectory(str(target.parent))
         item.setDownloadFileName(target.name)
 
         def complete(state):
-            if state == QWebEngineDownloadRequest.DownloadState.DownloadCompleted and target.exists():
-                self.store.replace_pdf(char, target)
-                self.load_embedded_pdf()
-                self.refresh_character_view()
+            if (
+                state == QWebEngineDownloadRequest.DownloadState.DownloadCompleted
+                and target.exists()
+            ):
+                try:
+                    self.store.replace_pdf(char, target)
+                    self.refresh_character_view()
+                    self.load_embedded_pdf()
+                except Exception as exc:
+                    QMessageBox.critical(self, APP_NAME, str(exc))
 
         item.stateChanged.connect(complete)
         item.accept()
+
+    def change_pdf_zoom(self, delta):
+        factor = min(1.5, max(0.55, self.embedded_pdf.zoomFactor() + delta))
+        self.embedded_pdf.setZoomFactor(factor)
+        if hasattr(self, "pdf_zoom_label"):
+            self.pdf_zoom_label.setText(f"{round(factor * 100)}%")
+
+    def fit_pdf_comfortably(self):
+        self.embedded_pdf.setZoomFactor(0.82)
+        if hasattr(self, "pdf_zoom_label"):
+            self.pdf_zoom_label.setText("82%")
 
     def select_character_in_list(self, char_id):
         for index in range(self.charlist.count()):
