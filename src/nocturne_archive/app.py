@@ -1398,7 +1398,7 @@ class MainWindow(QMainWindow):
         self.embedded_pdf_profile.downloadRequested.connect(self.embedded_pdf_download)
 
         self.embedded_pdf = QWebEngineView()
-        self.embedded_pdf.setPage(self.embedded_pdf_profile.newPage())
+        self.embedded_pdf.setPage(QWebEnginePage(self.embedded_pdf_profile, self.embedded_pdf))
         self.embedded_pdf.setMinimumHeight(900)
         sheet_layout.addWidget(self.embedded_pdf)
         layout.addWidget(sheet_card)

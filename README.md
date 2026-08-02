@@ -42,3 +42,10 @@ Output:
 - New nodes avoid overlap on spawn
 - Dragging another character into a private map requires confirmation
 - Relationship-map interactions never change the selected character in the left pane
+
+
+## PySide6 WebEngine startup correction
+
+- Replaced invalid `QWebEngineProfile.newPage()` calls
+- Character-sheet viewers now use `QWebEnginePage(profile, view)`
+- Corrected both the embedded character sheet and legacy standalone PDF viewer paths
