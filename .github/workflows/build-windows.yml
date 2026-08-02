@@ -1,20 +1,42 @@
 name: Build Windows EXE
+
 on:
   workflow_dispatch:
   push:
-    branches: [main, python-clean-rebuild]
+    branches:
+      - main
+      - python-clean-rebuild
+
 jobs:
   build:
     runs-on: windows-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m pip install --upgrade pip
-      - run: pip install -r requirements.txt
-      - run: pyinstaller --noconfirm --clean NocturneArchive.spec
-      - uses: actions/upload-artifact@v4
+
+      - name: Install requirements
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Build one-file EXE
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean NocturneArchive.spec
+          if (-not (Test-Path "dist/NocturneArchive.exe")) {
+            throw "dist/NocturneArchive.exe was not created."
+          }
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
         with:
           name: NocturneArchive-Windows
           path: dist/NocturneArchive.exe
+          if-no-files-found: error

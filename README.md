@@ -1,51 +1,70 @@
-# Nocturne Archive — Full Python Application
+# Nocturne Archive — New PY Version
 
-Blank first launch. No sample campaigns, characters, portraits, maps, notes, or user data are bundled.
+This is the clean Python/PySide6 source repository for Nocturne Archive.
 
-## Windows build
+It begins with no campaigns or characters. User-created campaigns, characters, portraits,
+PDF sheets, maps, clues, touchstones, history entries, and assets are stored locally in:
 
-Run:
+```text
+NocturneArchive.PY.Data
+```
 
-    scripts\build.cmd
+## Included application systems
 
-Output:
+- Gothic Nocturne Archive interface
+- Campaign creation, editing, selection, cloning, deletion, import, and export
+- Full Campaign Planner with persistent section data
+- Chronicle notes
+- Character creation, editing, cloning, portraits, conditions, and search
+- Embedded persistent character PDF on the Character page
+- Exact bundled interactive V20 and Call of Cthulhu master PDFs
+- Per-character PDF import, reset, direct export, and Windows-viewer opening
+- Private character relationship maps
+- Campaign relationship maps with imported private-map groups
+- Portrait nodes, drag/drop, directional arrows, labels, and saved positions
+- Clue Board
+- Touchstones
+- Investigator History
+- Managed campaign assets
+- Full ZIP archive backup and restore
+- JSON-only import and export
+- Embedded Windows V icon
+- Single-file Windows EXE build
 
-    dist\NocturneArchive.exe
+## Build locally on Windows
 
-## Implemented systems
+Double-click:
 
-- Campaign create, edit, delete, select, clone, JSON import/export
-- Full ZIP backup and restore including PDFs, portraits, maps, and assets
-- Full sectioned campaign planner with autosave and manual save
-- Chronicle notes: campaign notes, game plot, session journal, storyteller scratchpad
-- Character create, edit, clone, delete, search, portraits, conditions, rulesets
-- Exact bundled four-page V20 interactive PDF and bundled CoC PDF
-- Per-character PDF copies created when the character is created
-- PDF window, import any PDF, reset, byte-for-byte export, default-viewer opening
-- Private character maps, campaign map groups, portrait nodes, drag/drop, arrows, labels, propagation
-- Clue board with add/edit/delete
-- Touchstone manager with add/edit/delete
-- Investigator history with add/edit/delete
-- Assets copied into managed storage, opened, and deleted
-- Persistent user-owned storage in NocturneArchive.PY.Data
+```text
+scripts\build.cmd
+```
 
+The executable is created at:
 
-## Character-page and relationship UX corrections
+```text
+dist\NocturneArchive.exe
+```
 
-- Single-clicking a character in the left pane selects it and opens the Character tab
-- Double-clicking a character also opens the Character tab, never the PDF window
-- The character's actual persistent PDF is embedded directly below the identity card
-- Imported and reset PDFs immediately reload in the embedded viewer
-- Removed redundant separate Open PDF Window control
-- Default-viewer opening remains available
-- Relationship edits redraw lines without resetting user-dragged node positions
-- New nodes avoid overlap on spawn
-- Dragging another character into a private map requires confirmation
-- Relationship-map interactions never change the selected character in the left pane
+The build script only reports success after confirming that the EXE exists.
 
+## Run from source
 
-## PySide6 WebEngine startup correction
+Double-click:
 
-- Replaced invalid `QWebEngineProfile.newPage()` calls
-- Character-sheet viewers now use `QWebEnginePage(profile, view)`
-- Corrected both the embedded character sheet and legacy standalone PDF viewer paths
+```text
+scripts\run-source.cmd
+```
+
+## Build with GitHub Actions
+
+Push the repository to GitHub. Open **Actions**, select **Build Windows EXE**, and run the workflow.
+The completed run provides an artifact named:
+
+```text
+NocturneArchive-Windows
+```
+
+## Replacing an existing repository checkout
+
+Keep the existing hidden `.git` folder. Delete everything else in the repository directory.
+Paste all contents of this package into that directory, then commit and push.

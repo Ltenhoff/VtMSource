@@ -2,6 +2,11 @@
 build/
 dist/
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
 .tools/
+NocturneArchive.PY.Data/
 NocturneArchive.Data/
+*.log
+.DS_Store
+Thumbs.db

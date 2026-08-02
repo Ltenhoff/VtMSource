@@ -1,0 +1,6 @@
+1. Keep VtMSource\.git
+2. Delete everything else inside VtMSource
+3. Copy every item from this package into VtMSource
+4. Open GitHub Desktop
+5. Commit with: New PY Version
+6. Push origin
