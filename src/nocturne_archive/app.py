@@ -18,8 +18,8 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QLineEdit, QTextEdit, QComboBox, QListWidget, QListWidgetItem,
     QStackedWidget, QScrollArea, QFrame, QFormLayout, QDialog, QDialogButtonBox,
     QFileDialog, QMessageBox, QSplitter, QGraphicsView, QGraphicsScene,
-    QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsLineItem, QGraphicsObject, QGraphicsItem, QInputDialog,
-    QTableWidget, QTableWidgetItem, QHeaderView, QToolBar, QGroupBox, QAbstractItemView, QSizePolicy
+    QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsLineItem, QGraphicsPathItem, QGraphicsRectItem, QGraphicsPixmapItem, QGraphicsObject, QGraphicsItem, QInputDialog,
+    QTableWidget, QTableWidgetItem, QHeaderView, QToolBar, QGroupBox, QAbstractItemView, QSizePolicy, QColorDialog
 )
 from PySide6.QtWebEngineCore import (
     QWebEngineProfile, QWebEngineSettings, QWebEngineDownloadRequest, QWebEnginePage
@@ -51,6 +51,11 @@ QListWidget { background:#0a0f0d; border:1px solid #3f4c44; }
 QListWidget::item { padding:9px; border-bottom:1px solid #29332d; }
 QListWidget::item:selected { background:#1e2c25; color:white; }
 QScrollArea { border:none; }
+QScrollBar:vertical { background:#101713; width:16px; margin:0; }
+QScrollBar::handle:vertical { background:#647268; min-height:40px; border-radius:7px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }
+QScrollBar:horizontal { background:#101713; height:16px; }
+QScrollBar::handle:horizontal { background:#647268; min-width:40px; border-radius:7px; }
 QFrame#Card { background:#101713; border:1px solid #46534b; border-radius:12px; }
 QFrame#Banner { background:#211313; border:1px solid #5d4b45; border-radius:16px; }
 QLabel#Eyebrow { color:#c58b53; font-size:13px; letter-spacing:2px; font-weight:600; }
@@ -119,9 +124,11 @@ class Store:
         self.sheets = self.root / "CharacterSheets"
         self.portraits = self.root / "Portraits"
         self.asset_files = self.root / "Assets"
+        self.handout_files = self.root / "Handouts"
         self.sheets.mkdir(parents=True, exist_ok=True)
         self.portraits.mkdir(parents=True, exist_ok=True)
         self.asset_files.mkdir(parents=True, exist_ok=True)
+        self.handout_files.mkdir(parents=True, exist_ok=True)
         self.db = self.blank()
         self.load()
 
@@ -130,7 +137,7 @@ class Store:
         return {
             "schema_version": SCHEMA_VERSION,
             "chronicles": [], "characters": [], "maps": {},
-            "clues": [], "touchstones": [], "history": [], "assets": [],
+            "clues": [], "touchstones": [], "history": [], "assets": [], "handouts": [],
             "last_chronicle": ""
         }
 
@@ -295,8 +302,17 @@ class Store:
         self.sheets.mkdir(parents=True, exist_ok=True)
         self.portraits.mkdir(parents=True, exist_ok=True)
         self.asset_files.mkdir(parents=True, exist_ok=True)
+        self.handout_files.mkdir(parents=True, exist_ok=True)
         self.db = self.blank()
         self.load()
+
+    def copy_handout_file(self, source: str, handout_id: str) -> str:
+        path = Path(source)
+        if not path.is_file():
+            raise FileNotFoundError(source)
+        target = self.handout_files / f"{handout_id}{path.suffix}"
+        shutil.copy2(path, target)
+        return str(target)
 
     def master_pdf(self, ruleset):
         name = COC_PDF if "cthulhu" in ruleset.lower() or "coc" in ruleset.lower() else VTM_PDF
@@ -606,11 +622,12 @@ class GroupFrame(QGraphicsObject):
 
 
 class RelationshipEdge(QGraphicsObject):
-    def __init__(self, source_item, target_item, data: dict):
+    def __init__(self, source_item, target_item, data: dict, offset: float = 0.0):
         super().__init__()
         self.source_item = source_item
         self.target_item = target_item
         self.data = data
+        self.offset = offset
         self.setZValue(-10)
         if hasattr(source_item, "moved"):
             source_item.moved.connect(self.update)
@@ -634,6 +651,9 @@ class RelationshipEdge(QGraphicsObject):
         vector = b - a
         length = max(1.0, (vector.x()**2 + vector.y()**2) ** 0.5)
         ux, uy = vector.x()/length, vector.y()/length
+        normal = QPointF(-uy, ux)
+        a = QPointF(a.x()+normal.x()*self.offset, a.y()+normal.y()*self.offset)
+        b = QPointF(b.x()+normal.x()*self.offset, b.y()+normal.y()*self.offset)
 
         start = a
         end = b
@@ -703,6 +723,109 @@ class RelationshipDialog(QDialog):
         form.addRow(buttons)
 
 
+
+class DrawingMapView(QGraphicsView):
+    drawing_finished = Signal(dict)
+
+    def __init__(self, scene, parent=None):
+        super().__init__(scene, parent)
+        self.tool = "select"
+        self.stroke = QColor("#d8c49a")
+        self.width_value = 3
+        self._start = None
+        self._path = None
+        self._preview = None
+
+    def set_tool(self, tool):
+        self.tool = tool
+        self.setDragMode(
+            QGraphicsView.RubberBandDrag if tool == "select"
+            else QGraphicsView.NoDrag
+        )
+        self.setCursor(Qt.CrossCursor if tool != "select" else Qt.ArrowCursor)
+
+    def mousePressEvent(self, event):
+        if self.tool == "select":
+            return super().mousePressEvent(event)
+        pos = self.mapToScene(event.position().toPoint())
+        self._start = pos
+        pen = QPen(self.stroke, self.width_value, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+
+        if self.tool == "freehand":
+            self._path = QPainterPath(pos)
+            self._preview = QGraphicsPathItem(self._path)
+            self._preview.setPen(pen)
+            self._preview.setFlag(QGraphicsItem.ItemIsSelectable, True)
+            self.scene().addItem(self._preview)
+        elif self.tool in ("line", "rectangle", "ellipse"):
+            if self.tool == "line":
+                self._preview = QGraphicsLineItem(pos.x(), pos.y(), pos.x(), pos.y())
+            else:
+                self._preview = QGraphicsRectItem(QRectF(pos, pos))
+            self._preview.setPen(pen)
+            self._preview.setFlag(QGraphicsItem.ItemIsSelectable, True)
+            self.scene().addItem(self._preview)
+        elif self.tool == "text":
+            text, ok = QInputDialog.getText(self, "Map Text", "Text")
+            if ok and text:
+                item = QGraphicsTextItem(text)
+                item.setDefaultTextColor(self.stroke)
+                item.setFont(QFont("Georgia", 12))
+                item.setPos(pos)
+                item.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable)
+                self.scene().addItem(item)
+                self.drawing_finished.emit({
+                    "kind":"text", "x":pos.x(), "y":pos.y(),
+                    "text":text, "color":self.stroke.name()
+                })
+            self._start = None
+
+    def mouseMoveEvent(self, event):
+        if not self._start or not self._preview:
+            return super().mouseMoveEvent(event)
+        pos = self.mapToScene(event.position().toPoint())
+        if self.tool == "freehand":
+            self._path.lineTo(pos)
+            self._preview.setPath(self._path)
+        elif self.tool == "line":
+            self._preview.setLine(self._start.x(), self._start.y(), pos.x(), pos.y())
+        elif self.tool in ("rectangle", "ellipse"):
+            rect = QRectF(self._start, pos).normalized()
+            if self.tool == "rectangle":
+                self._preview.setRect(rect)
+            else:
+                # swap preview object to ellipse only once
+                if isinstance(self._preview, QGraphicsRectItem):
+                    self.scene().removeItem(self._preview)
+                    ellipse = QGraphicsEllipseItem(rect)
+                    ellipse.setPen(QPen(self.stroke, self.width_value))
+                    ellipse.setFlag(QGraphicsItem.ItemIsSelectable, True)
+                    self.scene().addItem(ellipse)
+                    self._preview = ellipse
+                else:
+                    self._preview.setRect(rect)
+
+    def mouseReleaseEvent(self, event):
+        if not self._start or not self._preview:
+            return super().mouseReleaseEvent(event)
+        data = {"kind":self.tool, "color":self.stroke.name(), "width":self.width_value}
+        if self.tool == "freehand":
+            points = []
+            path = self._preview.path()
+            for i in range(path.elementCount()):
+                e = path.elementAt(i)
+                points.append([e.x, e.y])
+            data["points"] = points
+        elif self.tool == "line":
+            line = self._preview.line()
+            data.update({"x1":line.x1(),"y1":line.y1(),"x2":line.x2(),"y2":line.y2()})
+        elif self.tool in ("rectangle","ellipse"):
+            rect = self._preview.rect()
+            data.update({"x":rect.x(),"y":rect.y(),"w":rect.width(),"h":rect.height()})
+        self.drawing_finished.emit(data)
+        self._start = self._path = self._preview = None
+
+
 class RelationshipMapWidget(QWidget):
     """
     Legacy Nocturne Archive relationship-map behavior rebuilt in Python:
@@ -724,12 +847,13 @@ class RelationshipMapWidget(QWidget):
         self.scene = QGraphicsScene(self)
         self.scene.setSceneRect(-1800,-1200,3600,2400)
         self.scene.edit_node_relationship = self.edit_node_relationship
-        self.view = QGraphicsView(self.scene)
+        self.view = DrawingMapView(self.scene)
         self.view.setRenderHint(QPainter.Antialiasing)
         self.view.setDragMode(QGraphicsView.RubberBandDrag)
         self.view.setAcceptDrops(True)
         self.view.viewport().setAcceptDrops(True)
         self.view.viewport().installEventFilter(self)
+        self.view.drawing_finished.connect(self.add_drawing_record)
 
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["Private Character Map","Campaign Map"])
@@ -747,6 +871,18 @@ class RelationshipMapWidget(QWidget):
         self.save_btn = QPushButton("Save Map")
         self.save_btn.clicked.connect(self.save_current)
 
+        self.tool_combo = QComboBox()
+        self.tool_combo.addItems(["Select","Freehand","Line","Rectangle","Ellipse","Text"])
+        self.tool_combo.currentTextChanged.connect(
+            lambda text: self.view.set_tool(text.lower())
+        )
+        self.color_btn = QPushButton("Drawing Color")
+        self.color_btn.clicked.connect(self.choose_drawing_color)
+        self.background_btn = QPushButton("Map Background")
+        self.background_btn.clicked.connect(self.choose_background)
+        self.delete_drawing_btn = QPushButton("Delete Selected Drawing")
+        self.delete_drawing_btn.clicked.connect(self.delete_selected_drawing)
+
         bar = QHBoxLayout()
         bar.addWidget(QLabel("Map"))
         bar.addWidget(self.mode_combo)
@@ -755,6 +891,10 @@ class RelationshipMapWidget(QWidget):
         bar.addWidget(self.link_btn)
         bar.addWidget(self.remove_btn)
         bar.addWidget(self.save_btn)
+        bar.addWidget(self.tool_combo)
+        bar.addWidget(self.color_btn)
+        bar.addWidget(self.background_btn)
+        bar.addWidget(self.delete_drawing_btn)
         bar.addStretch()
 
         self.help = QLabel(
@@ -819,7 +959,7 @@ class RelationshipMapWidget(QWidget):
     def current_data(self):
         maps = self._chronicle_maps()
         key = self.current_key()
-        return maps.setdefault(key, {"nodes":{}, "edges":[], "groups":{}}) if key else {"nodes":{}, "edges":[], "groups":{}}
+        return maps.setdefault(key, {"nodes":{}, "edges":[], "groups":{}, "drawings":[], "background":""}) if key else {"nodes":{}, "edges":[], "groups":{}, "drawings":[], "background":""}
 
     def eventFilter(self, watched, event):
         if watched is self.view.viewport():
@@ -867,9 +1007,105 @@ class RelationshipMapWidget(QWidget):
         self.store.save()
         self.load_current()
 
+    def choose_drawing_color(self):
+        color = QColorDialog.getColor(self.view.stroke, self, "Drawing Color")
+        if color.isValid():
+            self.view.stroke = color
+
+    def choose_background(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Map Background", "", "Images (*.png *.jpg *.jpeg *.webp *.bmp)"
+        )
+        if not path:
+            return
+        asset_id = str(uuid.uuid4())
+        try:
+            stored = self.store.copy_asset(path, asset_id)
+            self.current_data()["background"] = stored
+            self.store.save()
+            self.load_current()
+        except Exception as exc:
+            QMessageBox.critical(self, APP_NAME, str(exc))
+
+    def add_drawing_record(self, record):
+        self.current_data().setdefault("drawings", []).append(record)
+        self.store.save()
+
+    def render_drawings(self):
+        data = self.current_data()
+        background = data.get("background", "")
+        if background and Path(background).is_file():
+            pix = QPixmap(background)
+            if not pix.isNull():
+                item = QGraphicsPixmapItem(pix)
+                item.setZValue(-100)
+                item.setFlag(QGraphicsItem.ItemIsSelectable, True)
+                item.setData(0, "background")
+                self.scene.addItem(item)
+
+        for drawing in data.get("drawings", []):
+            pen = QPen(QColor(drawing.get("color","#d8c49a")), drawing.get("width",3))
+            kind = drawing.get("kind")
+            item = None
+            if kind == "freehand":
+                pts = drawing.get("points", [])
+                if pts:
+                    path = QPainterPath(QPointF(*pts[0]))
+                    for point in pts[1:]:
+                        path.lineTo(QPointF(*point))
+                    item = QGraphicsPathItem(path)
+                    item.setPen(pen)
+            elif kind == "line":
+                item = QGraphicsLineItem(
+                    drawing.get("x1",0), drawing.get("y1",0),
+                    drawing.get("x2",0), drawing.get("y2",0)
+                )
+                item.setPen(pen)
+            elif kind == "rectangle":
+                item = QGraphicsRectItem(
+                    drawing.get("x",0), drawing.get("y",0),
+                    drawing.get("w",0), drawing.get("h",0)
+                )
+                item.setPen(pen)
+            elif kind == "ellipse":
+                item = QGraphicsEllipseItem(
+                    drawing.get("x",0), drawing.get("y",0),
+                    drawing.get("w",0), drawing.get("h",0)
+                )
+                item.setPen(pen)
+            elif kind == "text":
+                item = QGraphicsTextItem(drawing.get("text",""))
+                item.setDefaultTextColor(QColor(drawing.get("color","#d8c49a")))
+                item.setPos(drawing.get("x",0), drawing.get("y",0))
+            if item:
+                item.setFlag(QGraphicsItem.ItemIsSelectable, True)
+                item.setData(0, "drawing")
+                item.setData(1, drawing)
+                self.scene.addItem(item)
+
+    def delete_selected_drawing(self):
+        selected = [
+            item for item in self.scene.selectedItems()
+            if item.data(0) in ("drawing","background")
+        ]
+        if not selected:
+            QMessageBox.information(self, APP_NAME, "Select a drawing or map background first.")
+            return
+        data = self.current_data()
+        for item in selected:
+            if item.data(0) == "background":
+                data["background"] = ""
+            else:
+                record = item.data(1)
+                if record in data.get("drawings", []):
+                    data["drawings"].remove(record)
+        self.store.save()
+        self.load_current()
+
     def load_current(self):
         self.scene.clear()
         self.refresh_private_combo()
+        self.render_drawings()
         if not self.chronicle_provider():
             return
 
@@ -924,16 +1160,29 @@ class RelationshipMapWidget(QWidget):
 
     def draw_edges(self):
         for item in list(self.scene.items()):
-            if isinstance(item,RelationshipEdge):
+            if isinstance(item, RelationshipEdge):
                 self.scene.removeItem(item)
 
         nodes = self.node_items()
         groups = self.group_items()
-        for edge in self.current_data().get("edges", []):
+        edges = self.current_data().get("edges", [])
+        pair_counts = {}
+        for edge in edges:
+            key = tuple(sorted([str(edge.get("source")), str(edge.get("target"))]))
+            pair_counts[key] = pair_counts.get(key, 0) + 1
+
+        pair_seen = {}
+        for edge in edges:
             src = groups.get(edge.get("source")) or nodes.get(edge.get("source"))
             dst = groups.get(edge.get("target")) or nodes.get(edge.get("target"))
-            if src and dst and edge.get("type") != "None":
-                self.scene.addItem(RelationshipEdge(src,dst,edge))
+            if not src or not dst or edge.get("type") == "None":
+                continue
+            key = tuple(sorted([str(edge.get("source")), str(edge.get("target"))]))
+            index = pair_seen.get(key, 0)
+            pair_seen[key] = index + 1
+            count = pair_counts[key]
+            offset = (index - (count - 1) / 2.0) * 18.0
+            self.scene.addItem(RelationshipEdge(src, dst, edge, offset))
 
     def selected_nodes_or_groups(self):
         return [i for i in self.scene.selectedItems() if isinstance(i,(PortraitNode,GroupFrame))]
@@ -997,27 +1246,31 @@ class RelationshipMapWidget(QWidget):
                 self.save_current()
 
     def _store_private_pair(self, source_id, target_id, arrow, note):
-        """
-        Store on both private maps so relationship changes propagate.
-        One-way source->target becomes a mirrored record on target's map that still
-        points back to source, preserving both characters' view of the same relation.
-        """
         maps = self._chronicle_maps()
+        defaults = {"nodes":{}, "edges":[], "groups":{}, "drawings":[], "background":""}
+        src_map = maps.setdefault(self._private_key(source_id), json.loads(json.dumps(defaults)))
+        dst_map = maps.setdefault(self._private_key(target_id), json.loads(json.dumps(defaults)))
 
-        src_map = maps.setdefault(self._private_key(source_id), {"nodes":{}, "edges":[], "groups":{}})
-        dst_map = maps.setdefault(self._private_key(target_id), {"nodes":{}, "edges":[], "groups":{}})
         src_map["nodes"].setdefault(source_id,{"x":0,"y":0})
         src_map["nodes"].setdefault(target_id,{"x":180,"y":0})
         dst_map["nodes"].setdefault(target_id,{"x":0,"y":0})
         dst_map["nodes"].setdefault(source_id,{"x":180,"y":0})
 
-        src_map["edges"] = [e for e in src_map.get("edges",[]) if not ({e.get("source"),e.get("target")}=={source_id,target_id})]
-        dst_map["edges"] = [e for e in dst_map.get("edges",[]) if not ({e.get("source"),e.get("target")}=={source_id,target_id})]
-
-        if arrow != "None":
-            src_map["edges"].append({"source":source_id,"target":target_id,"type":arrow,"note":note[:20],"side":"A"})
-            mirrored = "Mutual" if arrow=="Mutual" else "One-way"
-            dst_map["edges"].append({"source":source_id,"target":target_id,"type":mirrored,"note":note[:20],"side":"B"})
+        for map_data in (src_map, dst_map):
+            map_data["edges"] = [
+                edge for edge in map_data.get("edges", [])
+                if not (
+                    edge.get("source") == source_id and
+                    edge.get("target") == target_id
+                )
+            ]
+            if arrow != "None":
+                map_data["edges"].append({
+                    "source":source_id,
+                    "target":target_id,
+                    "type":arrow,
+                    "note":note[:20]
+                })
 
         self.store.save()
         self.draw_edges()
@@ -1185,6 +1438,7 @@ class MainWindow(QMainWindow):
         self.cid = ""
         self.charid = ""
         self.pdfwins = []
+        self.show_all_characters = False
         self.current_planner_section = "Campaign Identity"
         self.loading = False
         self.setWindowTitle(APP_NAME)
@@ -1222,7 +1476,7 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(frame); layout.setContentsMargins(12,0,12,0)
         brand = QLabel("NOCTURNE ARCHIVE"); brand.setObjectName("Brand"); layout.addWidget(brand); layout.addSpacing(20)
         self.nav = []
-        for index, text in enumerate(["Campaign Planner","Chronicle","Relationship Map","Character","Clue Board","Touchstones","Investigator History","Assets","Tools"]):
+        for index, text in enumerate(["Campaign Planner","Chronicle","Relationship Map","Character","Clue Board","Touchstones","Investigator History","Handouts","Assets","Tools"]):
             button = QPushButton(text); button.setObjectName("Nav"); button.setProperty("active", False)
             button.clicked.connect(lambda checked=False, i=index: self.switch_page(i))
             layout.addWidget(button); self.nav.append(button)
@@ -1262,8 +1516,10 @@ class MainWindow(QMainWindow):
         self.search.textChanged.connect(self.refresh_characters); layout.addWidget(self.search)
         char_row = QHBoxLayout()
         add = QPushButton("New Character"); add.setObjectName("Primary"); add.clicked.connect(self.add_character)
-        show = QPushButton("Show All"); show.clicked.connect(lambda: self.search.clear())
-        char_row.addWidget(add); char_row.addWidget(show); layout.addLayout(char_row)
+        self.show_all_button = QPushButton("Show All")
+        self.show_all_button.setCheckable(True)
+        self.show_all_button.toggled.connect(self.toggle_show_all)
+        char_row.addWidget(add); char_row.addWidget(self.show_all_button); layout.addLayout(char_row)
         char_actions = QHBoxLayout()
         clone_char = QPushButton("Clone Character"); clone_char.clicked.connect(self.clone_character)
         char_actions.addWidget(clone_char)
@@ -1287,6 +1543,7 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.clue_page())
         self.pages.addWidget(self.touchstone_page())
         self.pages.addWidget(self.history_page())
+        self.pages.addWidget(self.handouts_page())
         self.pages.addWidget(self.assets_page())
         self.pages.addWidget(self.tools_page())
 
@@ -1376,7 +1633,7 @@ class MainWindow(QMainWindow):
         self.relationship_map = RelationshipMapWidget(
             self.store,
             lambda: self.cid,
-            lambda: self.store.characters(self.cid)
+            lambda: self.store.characters()
         )
         return self.relationship_map
 
@@ -1450,6 +1707,22 @@ class MainWindow(QMainWindow):
         sheet_title.setObjectName("SectionTitle")
         sheet_layout.addWidget(sheet_title)
 
+        pdf_controls = QHBoxLayout()
+        zoom_out = QPushButton("−")
+        zoom_out.clicked.connect(lambda: self.change_pdf_zoom(-0.10))
+        zoom_in = QPushButton("+")
+        zoom_in.clicked.connect(lambda: self.change_pdf_zoom(0.10))
+        self.pdf_zoom_label = QLabel("85%")
+        fit_button = QPushButton("Comfort Fit")
+        fit_button.clicked.connect(self.fit_pdf_comfortably)
+        pdf_controls.addWidget(QLabel("View"))
+        pdf_controls.addWidget(zoom_out)
+        pdf_controls.addWidget(self.pdf_zoom_label)
+        pdf_controls.addWidget(zoom_in)
+        pdf_controls.addWidget(fit_button)
+        pdf_controls.addStretch()
+        sheet_layout.addLayout(pdf_controls)
+
         self.embedded_pdf_profile = QWebEngineProfile("embedded-character-sheet", self)
         self.embedded_pdf_profile.setPersistentStoragePath(str(data_root() / "EmbeddedPdfProfile"))
         embedded_settings = self.embedded_pdf_profile.settings()
@@ -1459,11 +1732,21 @@ class MainWindow(QMainWindow):
 
         self.embedded_pdf = QWebEngineView()
         self.embedded_pdf.setPage(QWebEnginePage(self.embedded_pdf_profile, self.embedded_pdf))
-        self.embedded_pdf.setMinimumHeight(520)
+        self.embedded_pdf.setMinimumHeight(480)
+        self.embedded_pdf.setZoomFactor(0.85)
         sheet_layout.addWidget(self.embedded_pdf)
         layout.addWidget(sheet_card)
 
         return self.wrap(inner)
+
+    def change_pdf_zoom(self, delta):
+        factor = min(1.5, max(0.55, self.embedded_pdf.zoomFactor() + delta))
+        self.embedded_pdf.setZoomFactor(factor)
+        self.pdf_zoom_label.setText(f"{round(factor*100)}%")
+
+    def fit_pdf_comfortably(self):
+        self.embedded_pdf.setZoomFactor(0.82)
+        self.pdf_zoom_label.setText("82%")
 
     def manager_page(self, title, description, columns):
         page = QWidget()
@@ -1516,6 +1799,33 @@ class MainWindow(QMainWindow):
         edit = QPushButton("Edit Selected"); edit.clicked.connect(self.edit_history)
         delete = QPushButton("Delete Selected"); delete.clicked.connect(self.delete_history)
         row.addWidget(add); row.addWidget(edit); row.addWidget(delete); row.addStretch()
+        layout.addLayout(row)
+        return page
+
+    def handouts_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.addWidget(self.banner(
+            "Journal", "Handouts",
+            "Store arbitrary files, images, PDFs, descriptions, and private notes inside the archive."
+        ))
+        self.handout_table = QTableWidget(0, 4)
+        self.handout_table.setHorizontalHeaderLabels(["Name","File","Description","GM Notes"])
+        self.handout_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.handout_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        layout.addWidget(self.handout_table)
+        row = QHBoxLayout()
+        for title, callback in [
+            ("Add Handout",self.add_handout),
+            ("Edit Selected",self.edit_handout),
+            ("Open File",self.open_handout),
+            ("Duplicate",self.duplicate_handout),
+            ("Delete",self.delete_handout),
+        ]:
+            button = QPushButton(title)
+            button.clicked.connect(callback)
+            row.addWidget(button)
+        row.addStretch()
         layout.addLayout(row)
         return page
 
@@ -1632,35 +1942,36 @@ class MainWindow(QMainWindow):
         self.refresh_characters()
         self.refresh_views()
 
+    def toggle_show_all(self, checked):
+        self.show_all_characters = bool(checked)
+        self.show_all_button.setText("Current Campaign" if checked else "Show All")
+        self.refresh_characters()
+
     def refresh_characters(self):
         self.charlist.blockSignals(True)
         self.charlist.clear()
         term = self.search.text().strip().lower()
-        for char in self.store.characters(self.cid):
-            if term and term not in char.name.lower():
-                continue
+        campaigns = {c.id: c.name for c in self.store.chronicles()}
+        rows = self.store.characters() if self.show_all_characters else self.store.characters(self.cid)
 
+        for char in rows:
+            campaign = campaigns.get(char.chronicle_id, "Unknown Campaign")
+            haystack = f"{char.name} {char.role} {char.condition} {char.ruleset} {campaign}".lower()
+            if term and term not in haystack:
+                continue
             item = QListWidgetItem(
-                f"{char.name}\n{char.role} · {char.condition}\n{char.ruleset}"
+                f"{char.name}\n{char.role} · {char.condition}\n{char.ruleset} — {campaign}"
             )
             item.setData(Qt.UserRole, char.id)
-            item.setSizeHint(QSize(0, 66))
-
+            item.setData(Qt.UserRole + 1, char.chronicle_id)
+            item.setSizeHint(QSize(0, 70))
             if char.portrait and Path(char.portrait).is_file():
-                source = QPixmap(char.portrait)
-                if not source.isNull():
-                    icon_size = 48
-                    scaled = source.scaled(
-                        icon_size,
-                        icon_size,
-                        Qt.KeepAspectRatioByExpanding,
-                        Qt.SmoothTransformation
-                    )
-                    x = max(0, (scaled.width() - icon_size) // 2)
-                    y = max(0, (scaled.height() - icon_size) // 2)
-                    cropped = scaled.copy(x, y, icon_size, icon_size)
-                    item.setIcon(QIcon(cropped))
-
+                pix = QPixmap(char.portrait)
+                if not pix.isNull():
+                    pix = pix.scaled(48, 48, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                    x = max(0, (pix.width()-48)//2)
+                    y = max(0, (pix.height()-48)//2)
+                    item.setIcon(QIcon(pix.copy(x, y, 48, 48)))
             self.charlist.addItem(item)
 
         self.charlist.blockSignals(False)
@@ -2090,6 +2401,9 @@ class MainWindow(QMainWindow):
         self.fill_manager_table(self.clue_table, clues, ["title","notes","found_by"])
         self.fill_manager_table(self.touchstone_table, touchstones, ["name","character","connection","notes"])
         self.fill_manager_table(self.history_table, history, ["investigator","era","connection","history"])
+        handouts = [x for x in self.store.db.get("handouts",[]) if x.get("chronicle_id") == self.cid]
+        if hasattr(self, "handout_table"):
+            self.fill_manager_table(self.handout_table, handouts, ["name","file","description","gm_notes"])
 
     def edit_record_dialog(self, title, labels, existing=None):
         dialog = QDialog(self)
@@ -2179,6 +2493,118 @@ class MainWindow(QMainWindow):
         self.edit_record(self.history_table,"history","Edit Investigator History",[("investigator","Investigator",False),("era","Era",False),("connection","Connection",False),("history","History",True)])
     def delete_history(self):
         self.delete_record(self.history_table,"history")
+
+    def handout_dialog(self, existing=None):
+        existing = existing or {}
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Handout")
+        dialog.resize(700, 520)
+        form = QFormLayout(dialog)
+        name = QLineEdit(existing.get("name",""))
+        file_edit = QLineEdit(existing.get("file",""))
+        browse = QPushButton("Browse")
+        def choose():
+            path, _ = QFileDialog.getOpenFileName(dialog, "Choose Handout File")
+            if path:
+                file_edit.setText(path)
+        browse.clicked.connect(choose)
+        file_row = QHBoxLayout()
+        file_row.addWidget(file_edit)
+        file_row.addWidget(browse)
+        description = QTextEdit(existing.get("description",""))
+        gm_notes = QTextEdit(existing.get("gm_notes",""))
+        form.addRow("Name", name)
+        form.addRow("File", file_row)
+        form.addRow("Description / Player Notes", description)
+        form.addRow("GM Notes", gm_notes)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+        if not dialog.exec():
+            return None
+        return {
+            "name":name.text().strip() or Path(file_edit.text()).name or "Untitled Handout",
+            "file":file_edit.text(),
+            "description":description.toPlainText(),
+            "gm_notes":gm_notes.toPlainText()
+        }
+
+    def selected_handout(self):
+        row = self.handout_table.currentRow()
+        if row < 0:
+            return None
+        hid = self.handout_table.item(row,0).data(Qt.UserRole)
+        return next((h for h in self.store.db.get("handouts",[]) if h.get("id")==hid), None)
+
+    def add_handout(self):
+        if not self.current_chronicle():
+            QMessageBox.information(self, APP_NAME, "Create or select a campaign first.")
+            return
+        values = self.handout_dialog()
+        if not values:
+            return
+        hid = str(uuid.uuid4())
+        stored = ""
+        if values["file"]:
+            stored = self.store.copy_handout_file(values["file"], hid)
+        values.update({"id":hid,"chronicle_id":self.cid,"file":stored})
+        self.store.db.setdefault("handouts",[]).append(values)
+        self.store.save()
+        self.refresh_managers()
+
+    def edit_handout(self):
+        handout = self.selected_handout()
+        if not handout:
+            QMessageBox.information(self, APP_NAME, "Select a handout first.")
+            return
+        values = self.handout_dialog(handout)
+        if not values:
+            return
+        if values["file"] and values["file"] != handout.get("file"):
+            values["file"] = self.store.copy_handout_file(values["file"], handout["id"])
+        handout.update(values)
+        self.store.save()
+        self.refresh_managers()
+
+    def open_handout(self):
+        handout = self.selected_handout()
+        if not handout:
+            QMessageBox.information(self, APP_NAME, "Select a handout first.")
+            return
+        path = handout.get("file","")
+        if path and Path(path).exists():
+            os.startfile(path)
+        else:
+            QMessageBox.information(self, APP_NAME, handout.get("description","No file attached."))
+
+    def duplicate_handout(self):
+        handout = self.selected_handout()
+        if not handout:
+            QMessageBox.information(self, APP_NAME, "Select a handout first.")
+            return
+        clone = dict(handout)
+        clone["id"] = str(uuid.uuid4())
+        clone["name"] = "Copy of " + handout.get("name","Handout")
+        source = handout.get("file","")
+        if source and Path(source).exists():
+            clone["file"] = self.store.copy_handout_file(source, clone["id"])
+        self.store.db.setdefault("handouts",[]).append(clone)
+        self.store.save()
+        self.refresh_managers()
+
+    def delete_handout(self):
+        handout = self.selected_handout()
+        if not handout:
+            QMessageBox.information(self, APP_NAME, "Select a handout first.")
+            return
+        if handout.get("file"):
+            Path(handout["file"]).unlink(missing_ok=True)
+        self.store.db["handouts"] = [
+            h for h in self.store.db.get("handouts",[]) if h.get("id") != handout["id"]
+        ]
+        self.store.save()
+        self.refresh_managers()
 
     def export_full_backup(self):
         self.persist_current()

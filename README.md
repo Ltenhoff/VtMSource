@@ -80,3 +80,16 @@ Paste all contents of this package into that directory, then commit and push.
 - Portraits retain their aspect ratio
 - Embedded PDF height adapts better to smaller displays
 - Character-list entries display their stored portrait as an icon
+
+
+## Journal, tabletop, and UX completion
+
+- Show All truly lists characters from every campaign and labels their campaign
+- Cross-campaign characters can be dragged onto the active map
+- A→B and B→A are stored independently and rendered as parallel connectors
+- Embedded PDF defaults to a comfortable 85% scale with zoom controls
+- Wider, higher-contrast scrollbars
+- Handouts journal with arbitrary file uploads, descriptions, GM notes, open, duplicate, and delete
+- Map image backgrounds
+- Select, freehand, line, rectangle, ellipse, and text drawing tools
+- Persistent drawing color, geometry, text, and map backgrounds
